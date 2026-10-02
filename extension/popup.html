@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>じかんガード</title>
+  <link rel="stylesheet" href="ui.css">
+  <script src="popup.js" defer></script>
+</head>
+<body class="popup-page">
+  <main class="popup-main">
+    <header class="brand-header">
+      <div class="brand-mark" aria-hidden="true">じ</div>
+      <div><p class="eyebrow">YOUR TIME, YOUR PACE</p><h1>じかんガード</h1></div>
+      <button id="open-options" class="icon-button" type="button" aria-label="設定を開く" title="設定を開く">⚙</button>
+    </header>
+    <section class="today-heading">
+      <div><p class="eyebrow">TODAY'S BALANCE</p><h2>今日の、のこり時間</h2></div>
+      <span id="today" class="date-label"></span>
+    </section>
+    <p id="popup-status" class="status-message" role="status" aria-live="polite">利用状況を読み込んでいます…</p>
+    <div id="site-list" class="site-list" aria-label="サイトごとの利用状況"></div>
+    <div id="empty-state" class="empty-state" hidden><p class="empty-symbol" aria-hidden="true">◷</p><h2>時間の使い方を、自分で決めよう</h2><p>設定からサイトと1日の上限を追加できます</p></div>
+    <footer class="popup-footer"><span class="privacy-dot" aria-hidden="true"></span><span>この端末だけに記録 · 毎日0時にリセット</span></footer>
+  </main>
+</body>
+</html>

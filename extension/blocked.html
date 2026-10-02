@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>今日は、ここまで · じかんガード</title>
+  <link rel="stylesheet" href="ui.css">
+  <script src="blocked.js" defer></script>
+</head>
+<body class="blocked-page">
+  <main class="blocked-main">
+    <header class="brand-header blocked-brand"><div class="brand-mark" aria-hidden="true">じ</div><span class="brand-name">じかんガード</span></header>
+    <div class="pause-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="pause-circle"><span></span><span></span></div><span class="art-spark spark-one">✦</span><span class="art-spark spark-two">✦</span><span class="art-dot"></span></div>
+    <p class="eyebrow">A LITTLE SPACE FOR SOMETHING ELSE</p>
+    <h1 id="blocked-title">今日は、ここまで。</h1>
+    <p class="blocked-description" id="blocked-description">今日の利用状況を確認しています</p>
+    <div class="blocked-site"><span id="blocked-domain">サイト</span><span class="blocked-site-divider" aria-hidden="true"></span><span id="blocked-budget">確認中…</span></div>
+    <p class="reset-note" id="reset-note">時間の上限は、端末のローカル時刻で毎日0時にリセットされます</p>
+    <div class="blocked-actions"><button id="check-again" class="button button-primary" type="button" disabled>利用状況を確認</button><button id="blocked-options" class="button button-secondary" type="button">設定を開く</button></div>
+    <p id="blocked-status" class="blocked-status" role="status" aria-live="polite"></p>
+    <p class="gentle-note">少し目を休めたり、窓の外を眺めたり。<br>つぎの時間も、あなたのもの。</p>
+  </main>
+</body>
+</html>

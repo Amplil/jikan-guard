@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>設定 · じかんガード</title>
+  <link rel="stylesheet" href="ui.css">
+  <script src="options.js" defer></script>
+</head>
+<body class="options-page">
+  <main class="settings-main">
+    <header class="brand-header settings-brand"><div class="brand-mark" aria-hidden="true">じ</div><div><p class="eyebrow">YOUR TIME, YOUR PACE</p><span class="brand-name">じかんガード</span></div><span class="page-tag">設定</span></header>
+    <section class="settings-intro"><p class="eyebrow">MAKE ROOM FOR YOUR DAY</p><h1>自分の時間を、<br>自分のペースで。</h1><p>サイトごとに、1日の上限を決めましょう。<br>使い切ったら、また明日。</p></section>
+    <form id="settings-form" novalidate>
+      <section class="settings-panel" aria-labelledby="rules-heading">
+        <div class="panel-heading"><div><h2 id="rules-heading">サイトと時間</h2><p>1日の上限は0〜1,440分。0分にするとアクセスをブロックします</p></div><span id="rule-count" class="count-label">0 / 50</span></div>
+        <p id="load-status" class="status-message" role="status">設定を読み込んでいます…</p>
+        <div id="rule-list" class="rule-list"></div>
+        <div id="rules-empty" class="empty-rules" hidden>サイトがまだありません。「サイトを追加」から設定しましょう</div>
+        <div class="add-rule-bar"><button id="add-rule" type="button" class="button button-secondary" disabled><span aria-hidden="true">＋</span> サイトを追加</button><p>ドメイン単位で登録。サブドメインも含めて制限します</p></div>
+      </section>
+      <div class="save-bar"><div><p id="save-status" class="save-status" role="status" aria-live="polite">変更は保存すると反映されます</p><p class="save-subtext">上限や計測方法を変えても、今日の使用時間は引き継ぎます</p></div><button id="save-settings" type="submit" class="button button-primary" disabled>設定を保存</button></div>
+    </form>
+    <section class="explainer-grid" aria-label="計測方法について">
+      <article class="info-card"><span class="info-number" aria-hidden="true">01</span><h2>動画の再生時間</h2><p>実際に再生していた時間を数えます。2倍速で10分見た場合も、使用時間は10分です。</p><p>ミュート・バックグラウンド・ピクチャーインピクチャーでの再生も対象。一時停止・バッファリング・シーク中は数えません。</p></article>
+      <article class="info-card"><span class="info-number" aria-hidden="true">02</span><h2>タブを前面に出している時間</h2><p>フォーカスのあるChromeウィンドウで、対象サイトのタブを選択している時間を数えます。</p><p>別のタブや別のアプリを使っている間は数えません。</p></article>
+    </section>
+    <aside class="notice"><span class="notice-symbol" aria-hidden="true">i</span><div><h2>知っておいてほしいこと</h2><ul><li>動画の検出はベストエフォートです。サイト独自のプレーヤーや、閉じたShadow DOM内の動画などは計測できない場合があります。</li><li>同じドメインや、親子関係にあるドメインは重複登録できません。例：youtube.com と www.youtube.com</li><li>使用時間は端末のローカル時刻で毎日0時にリセットされます。拡張機能の無効化や削除を防ぐものではありません。</li><li>設定と使用時間はこの端末のChromeに保存します。解析ツールや外部サーバーへの送信はありません。</li></ul></div></aside>
+    <footer class="settings-footer">じかんガード <span aria-hidden="true">·</span> 余白をつくる、小さな習慣。</footer>
+  </main>
+  <template id="rule-template">
+    <fieldset class="rule-row">
+      <legend class="sr-only">サイトの設定</legend>
+      <div class="field field-domain"><label>ドメイン<input class="domain-input" type="text" placeholder="例：youtube.com" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="253" required></label></div>
+      <div class="field field-limit"><label>1日の上限<span class="input-with-unit"><input class="limit-input" type="number" min="0" max="1440" step="1" inputmode="numeric" required><span>分</span></span></label></div>
+      <div class="field field-mode"><label>計測方法<select class="mode-input"><option value="video">動画の再生時間</option><option value="foreground">タブを前面に出している時間</option></select></label></div>
+      <div class="rule-actions"><label class="toggle-label"><input class="enabled-input" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span class="toggle-text">有効</span></label><button class="delete-rule icon-button" type="button" aria-label="このサイトを削除" title="削除">×</button></div>
+      <p class="rule-error" role="alert" hidden></p>
+    </fieldset>
+  </template>
+</body>
+</html>
