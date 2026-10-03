@@ -12,26 +12,30 @@ vm.createContext(sandbox);
 vm.runInContext(section('function clearError(', 'function addRow(') + section('function normalizeDomain(', 'function setBusy('), sandbox);
 for (const [input, result] of [[' YouTube.COM ', 'youtube.com'], ['https://www.youtube.com/watch?v=123', 'www.youtube.com'], ['example.com.', 'example.com'], ['例え.jp', 'xn--r8jz45g.jp']]) assert.equal(sandbox.normalizeDomain(input), result);
 for (const input of ['', '*.example.com', 'localhost', '192.168.0.1', '2130706433', 'http://u:p@example.com/', 'https://example.com:8443/', 'example.com/path', '-example.com', 'example..com', 'example.com?q=1', 'ftp://example.com/', '<script>.com']) assert.throws(() => sandbox.normalizeDomain(input), input);
-function row(domain, limit = '30', mode = 'video', enabled = true) {
+function row(domain, mode = 'video', enabled = true) {
  const controls = {};
- for (const [name, value] of Object.entries({'domain-input':domain,'limit-input':limit,'mode-input':mode})) controls[`.${name}`] = {value, attrs:{}, setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];},focus(){this.focused=true;}};
+ for (const [name, value] of Object.entries({'domain-input':domain,'mode-input':mode})) controls[`.${name}`] = {value, attrs:{}, setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];},focus(){this.focused=true;}};
  controls['.enabled-input'] = {checked:enabled};
  controls['.rule-error'] = {hidden:true,textContent:''};
  return {controls,querySelector(selector){return controls[selector];},querySelectorAll(){return Object.values(controls).filter(x=>x.attrs?.['aria-invalid']);}};
 }
-list.children = [row('youtube.com'), row('tiktok.com', '0', 'foreground', false)];
-assert.deepEqual(JSON.parse(JSON.stringify(sandbox.collectRules())), [{domain:'youtube.com',limitMinutes:30,mode:'video',enabled:true},{domain:'tiktok.com',limitMinutes:0,mode:'foreground',enabled:false}]);
+list.children = [row('youtube.com'), row('tiktok.com', 'foreground', false)];
+assert.deepEqual(JSON.parse(JSON.stringify(sandbox.collectRules())), [{domain:'youtube.com',mode:'video',enabled:true},{domain:'tiktok.com',mode:'foreground',enabled:false}]);
 for (const names of [['youtube.com','youtube.com'],['youtube.com','www.youtube.com'],['www.youtube.com','youtube.com']]) {
  list.children = names.map(name=>row(name));
  assert.equal(sandbox.collectRules(), null);
  assert.match(list.children[1].controls['.rule-error'].textContent, /重複/);
  assert.equal(list.children[1].controls['.domain-input'].focused, true);
 }
-for (const limit of ['', '-1', '1.5', '1441', '1e3']) {list.children=[row('example.com',limit)]; assert.equal(sandbox.collectRules(),null,limit);}
-for (const limit of ['0','1440']) {list.children=[row('example.com',limit)]; assert.equal(sandbox.collectRules()[0].limitMinutes,Number(limit));}
+for (const limit of ['', '-1', '1.5', '1441', '1e3']) assert.throws(() => sandbox.readDailyLimit(limit), limit);
+for (const limit of ['0', '1440']) assert.equal(sandbox.readDailyLimit(limit), Number(limit));
 const popup = fs.readFileSync(path.join(root, 'popup.js'), 'utf8');
 vm.runInContext(popup.slice(popup.indexOf('function duration('), popup.indexOf('function showStatus(')),sandbox);
 assert.equal(sandbox.duration(0),'0秒'); assert.equal(sandbox.duration(1),'1秒'); assert.equal(sandbox.duration(61000),'1分 1秒'); assert.equal(sandbox.duration(3600000),'1時間');
+assert.equal(sandbox.clock(0),'00:00'); assert.equal(sandbox.clock(1),'00:01'); assert.equal(sandbox.clock(9*60000+59000),'09:59'); assert.equal(sandbox.clock(90*60000),'1h30m');
+assert.equal(sandbox.refreshDelay(10*60000),1000); assert.equal(sandbox.refreshDelay(90*60000+30000),31000); assert.equal(sandbox.refreshDelay(60*60000),1000);
+assert.equal(/setInterval\(refresh,\s*2000\)/.test(popup), false);
+assert.equal(/nextWait - \(Date\.now\(\) - started\)/.test(popup), true);
 for(const page of ['popup','options','blocked']) {
  const html=fs.readFileSync(path.join(root,`${page}.html`),'utf8');
  assert.equal(/<script(?![^>]*\bsrc=)[^>]*>/i.test(html),false,`${page}: no inline scripts`);

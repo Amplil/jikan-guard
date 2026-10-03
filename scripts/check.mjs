@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 const dir=new URL('../extension/',import.meta.url);
 const manifest=JSON.parse(fs.readFileSync(new URL('manifest.json',dir),'utf8'));
 if(manifest.manifest_version!==3) throw Error('Manifest must be V3');
@@ -17,7 +18,7 @@ if(manifest.background.type!=='module') throw Error('Worker imports require modu
 
 for(const file of fs.readdirSync(dir)) {
  if(file.endsWith('.js')) {
-  execFileSync(process.execPath,['--check',new URL(file,dir).pathname]);
+  execFileSync(process.execPath,['--check',fileURLToPath(new URL(file,dir))]);
   const source=fs.readFileSync(new URL(file,dir),'utf8');
   for(const [,relative] of source.matchAll(/\bimport\s+(?:[^'";]*?\s+from\s+)?['"](\.[^'"]+)['"]/g)) if(!fs.existsSync(new URL(relative,new URL(file,dir)))) throw Error(`Missing import ${relative} in ${file}`);
  }

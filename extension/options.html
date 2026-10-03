@@ -10,10 +10,17 @@
 <body class="options-page">
   <main class="settings-main">
     <header class="brand-header settings-brand"><div class="brand-mark" aria-hidden="true">じ</div><div><p class="eyebrow">YOUR TIME, YOUR PACE</p><span class="brand-name">じかんガード</span></div><span class="page-tag">設定</span></header>
-    <section class="settings-intro"><p class="eyebrow">MAKE ROOM FOR YOUR DAY</p><h1>自分の時間を、<br>自分のペースで。</h1><p>サイトごとに、1日の上限を決めましょう。<br>使い切ったら、また明日。</p></section>
+    <section class="settings-intro"><p class="eyebrow">MAKE ROOM FOR YOUR DAY</p><h1>自分の時間を、<br>自分のペースで。</h1><p>登録したサイトの使用時間を、1日の合計で制限します。<br>使い切ったら、また明日。</p></section>
     <form id="settings-form" novalidate>
       <section class="settings-panel" aria-labelledby="rules-heading">
-        <div class="panel-heading"><div><h2 id="rules-heading">サイトと時間</h2><p>1日の上限は0〜1,440分。0分にするとアクセスをブロックします</p></div><span id="rule-count" class="count-label">0 / 50</span></div>
+        <div class="panel-heading"><div><h2 id="rules-heading">サイト</h2><p>ここで選んだサイトの使用時間が、1日の合計上限に合算されます</p></div><span id="rule-count" class="count-label">0 / 50</span></div>
+        <div class="daily-limit">
+          <div class="field">
+            <label for="daily-limit">1日の合計上限<span class="input-with-unit"><input id="daily-limit" type="number" min="0" max="1440" step="1" inputmode="numeric" aria-describedby="daily-limit-error" required><span>分</span></span></label>
+            <p id="daily-limit-error" class="field-error" role="alert" hidden></p>
+          </div>
+          <p class="daily-limit-note">YouTubeもTikTokも、追加したサイトも、この1つの時間を分け合います。0分にすると、有効なサイトはすぐブロックされます</p>
+        </div>
         <p id="load-status" class="status-message" role="status">設定を読み込んでいます…</p>
         <div id="rule-list" class="rule-list"></div>
         <div id="rules-empty" class="empty-rules" hidden>サイトがまだありません。「サイトを追加」から設定しましょう</div>
@@ -23,7 +30,7 @@
     </form>
     <section class="explainer-grid" aria-label="計測方法について">
       <article class="info-card"><span class="info-number" aria-hidden="true">01</span><h2>動画の再生時間</h2><p>実際に再生していた時間を数えます。2倍速で10分見た場合も、使用時間は10分です。</p><p>ミュート・バックグラウンド・ピクチャーインピクチャーでの再生も対象。一時停止・バッファリング・シーク中は数えません。</p></article>
-      <article class="info-card"><span class="info-number" aria-hidden="true">02</span><h2>タブを前面に出している時間</h2><p>フォーカスのあるChromeウィンドウで、対象サイトのタブを選択している時間を数えます。</p><p>別のタブや別のアプリを使っている間は数えません。</p></article>
+      <article class="info-card"><span class="info-number" aria-hidden="true">02</span><h2>見えているタブの時間</h2><p>最小化していないウィンドウで、対象サイトのタブを選択している時間を数えます。並べて開いた別ウィンドウも、フォーカスがなくても数えます。</p><p>選択していない背面タブや、最小化しているウィンドウは数えません。</p></article>
     </section>
     <aside class="notice"><span class="notice-symbol" aria-hidden="true">i</span><div><h2>知っておいてほしいこと</h2><ul><li>動画の検出はベストエフォートです。サイト独自のプレーヤーや、閉じたShadow DOM内の動画などは計測できない場合があります。</li><li>同じドメインや、親子関係にあるドメインは重複登録できません。例：youtube.com と www.youtube.com</li><li>使用時間は端末のローカル時刻で毎日0時にリセットされます。拡張機能の無効化や削除を防ぐものではありません。</li><li>設定と使用時間はこの端末のChromeに保存します。解析ツールや外部サーバーへの送信はありません。</li></ul></div></aside>
     <footer class="settings-footer">じかんガード <span aria-hidden="true">·</span> 余白をつくる、小さな習慣。</footer>
@@ -32,8 +39,7 @@
     <fieldset class="rule-row">
       <legend class="sr-only">サイトの設定</legend>
       <div class="field field-domain"><label>ドメイン<input class="domain-input" type="text" placeholder="例：youtube.com" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="253" required></label></div>
-      <div class="field field-limit"><label>1日の上限<span class="input-with-unit"><input class="limit-input" type="number" min="0" max="1440" step="1" inputmode="numeric" required><span>分</span></span></label></div>
-      <div class="field field-mode"><label>計測方法<select class="mode-input"><option value="video">動画の再生時間</option><option value="foreground">タブを前面に出している時間</option></select></label></div>
+      <div class="field field-mode"><label>計測方法<select class="mode-input"><option value="video">動画の再生時間</option><option value="foreground">見えているタブの時間</option></select></label></div>
       <div class="rule-actions"><label class="toggle-label"><input class="enabled-input" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span class="toggle-text">有効</span></label><button class="delete-rule icon-button" type="button" aria-label="このサイトを削除" title="削除">×</button></div>
       <p class="rule-error" role="alert" hidden></p>
     </fieldset>

@@ -14,6 +14,20 @@ function duration(ms) {
   return `${Math.floor(minutes / 60)}時間${minutes % 60 ? ` ${minutes % 60}分` : ''}`;
 }
 
+function clock(ms) {
+  const seconds = Math.max(0, Math.ceil((Number(ms) || 0) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours >= 1) return `${hours}h${minutes}m`;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function refreshDelay(ms) {
+  const seconds = Math.max(0, Math.ceil((Number(ms) || 0) / 1000));
+  if (seconds < 3600) return 1000;
+  return ((seconds % 60) + 1) * 1000;
+}
+
 function showStatus(message, error = false) {
   if (message !== lastMessage) statusMessage.textContent = message;
   lastMessage = message;
@@ -36,31 +50,35 @@ function makeCard() {
   badge.className = 'badge';
   identity.append(monogram, name);
   top.append(identity, badge);
-  const remaining = document.createElement('div');
-  remaining.className = 'remaining-line';
+  const used = document.createElement('div');
+  used.className = 'remaining-line';
   const amount = document.createElement('strong');
   const label = document.createElement('span');
-  label.textContent = 'のこり';
-  remaining.append(amount, label);
-  const track = document.createElement('div');
-  track.className = 'progress-track';
-  track.setAttribute('role', 'progressbar');
-  track.setAttribute('aria-valuemin', '0');
-  track.setAttribute('aria-valuemax', '100');
-  const bar = document.createElement('div');
-  bar.className = 'progress-fill';
-  track.append(bar);
+  label.textContent = '使用';
+  used.append(amount, label);
   const meta = document.createElement('div');
   meta.className = 'site-meta';
-  const usage = document.createElement('span');
   const mode = document.createElement('span');
-  meta.append(usage, mode);
-  card.append(top, remaining, track, meta);
-  return {card, name, badge, monogram, amount, label, track, bar, usage, mode};
+  meta.append(mode);
+  card.append(top, used, meta);
+  return {card, name, badge, monogram, amount, mode};
 }
 
 function render(state) {
   document.getElementById('today').textContent = state.day ? state.day.replaceAll('-', '.') : '';
+  const limit = Number(state.dailyLimitMinutes) || 0;
+  const used = Number(state.usedMs) || 0;
+  const remaining = Number(state.remainingMs) || 0;
+  const blocked = Boolean(state.blocked);
+  const ratio = limit > 0 ? Math.min(100, Math.max(0, used / (limit * 600))) : (blocked ? 100 : 0);
+  const hero = document.getElementById('budget-hero');
+  const track = document.getElementById('budget-track');
+  hero.classList.toggle('is-blocked', blocked);
+  document.getElementById('remaining').textContent = clock(remaining);
+  document.getElementById('budget-fill').style.width = `${Number.isFinite(ratio) ? ratio : 0}%`;
+  track.setAttribute('aria-valuenow', String(Math.round(Number.isFinite(ratio) ? ratio : 0)));
+  track.setAttribute('aria-valuetext', `${duration(used)}使用、1日の合計${limit}分`);
+  document.getElementById('budget-meta').textContent = `${duration(used)} 使用 / 合計 ${limit}分`;
   const rules = Array.isArray(state.rules) ? state.rules : [];
   const present = new Set();
   for (const rule of rules) {
@@ -71,19 +89,12 @@ function render(state) {
     view.name.title = rule.domain;
     view.monogram.textContent = String(rule.domain).replace(/^www\./, '').slice(0, 1).toUpperCase();
     const enabled = rule.enabled !== false;
-    const blocked = enabled && Boolean(rule.blocked);
-    const ratio = Number(rule.limitMinutes) > 0 ? Math.min(100, Math.max(0, Number(rule.usedMs) / (rule.limitMinutes * 600))) : 100;
-    view.card.classList.toggle('is-blocked', blocked);
+    const siteBlocked = enabled && Boolean(rule.blocked);
+    view.card.classList.toggle('is-blocked', siteBlocked);
     view.card.classList.toggle('is-disabled', !enabled);
-    view.badge.textContent = !enabled ? 'OFF' : blocked ? '今日の上限です' : 'ON';
-    view.amount.textContent = enabled ? duration(rule.remainingMs) : '制限オフ';
-    view.label.hidden = !enabled;
-    view.bar.style.width = `${Number.isFinite(ratio) ? ratio : 0}%`;
-    view.track.setAttribute('aria-valuenow', String(Math.round(Number.isFinite(ratio) ? ratio : 0)));
-    view.track.setAttribute('aria-label', `${rule.domain}の今日の使用時間`);
-    view.track.setAttribute('aria-valuetext', `${duration(rule.usedMs)}使用、上限${rule.limitMinutes}分`);
-    view.usage.textContent = `${duration(rule.usedMs)} 使用 / ${rule.limitMinutes}分`;
-    view.mode.textContent = rule.mode === 'foreground' ? '前面のタブ' : '動画の再生';
+    view.badge.textContent = !enabled ? 'OFF' : siteBlocked ? '今日の上限です' : '計測中';
+    view.amount.textContent = duration(rule.usedMs);
+    view.mode.textContent = rule.mode === 'foreground' ? '見えているタブ' : '動画の再生';
     siteList.append(view.card);
   }
   for (const [domain, view] of cards) {
@@ -99,8 +110,10 @@ async function refresh() {
     const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
     if (!state?.ok || !Array.isArray(state.rules)) throw new Error(state?.error || '利用状況を取得できませんでした');
     render(state);
+    nextWait = refreshDelay(state.remainingMs);
     showStatus('');
   } catch (error) {
+    nextWait = 1000;
     showStatus(`読み込みに失敗しました。${error.message || '拡張機能を開き直してください'}`, true);
   } finally { loading = false; }
 }
@@ -111,6 +124,14 @@ document.getElementById('open-options').addEventListener('click', async () => {
     if (response?.ok === false) throw new Error(response.error || '設定を開けませんでした');
   } catch (error) { showStatus(error.message || '設定を開けませんでした', true); }
 });
-refresh();
-const refreshTimer = setInterval(refresh, 2000);
-window.addEventListener('pagehide', () => clearInterval(refreshTimer), {once: true});
+let refreshTimer = 0;
+let closed = false;
+let nextWait = 1000;
+async function tick() {
+  const started = Date.now();
+  await refresh();
+  if (closed) return;
+  refreshTimer = setTimeout(tick, Math.max(0, nextWait - (Date.now() - started)));
+}
+tick();
+window.addEventListener('pagehide', () => { closed = true; clearTimeout(refreshTimer); }, {once: true});

@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
   MAX_GAP_MS, DEFAULT_RULES, localDay, localMidnight, nextMidnight,
-  hostMatches, hostOf, normalizeDomain, validateRules, ruleFor,
-  rollover, mergeIntervals, usedMs, creditInterval, ruleStatus, mediaAdvanced
+  hostMatches, hostOf, normalizeDomain, validateDailyLimit, validateRules, ruleFor,
+  rollover, mergeIntervals, usedMs, totalUsedMs, creditInterval, budgetOf, ruleStatus,
+  countdownBadge, remainingPhrase, mediaAdvanced
 } from '../extension/core.js';
 
 const instant = () => +new Date(2026, 9, 2, 12, 0, 0);
 const emptyLedger = (now = instant()) => ({ day: localDay(now), usage: {} });
-const rule = (overrides = {}) => ({ domain: 'youtube.com', limitMinutes: 30, mode: 'video', enabled: true, ...overrides });
+const rule = (overrides = {}) => ({ domain: 'youtube.com', mode: 'video', enabled: true, ...overrides });
 
 // Fixtures use local dates deliberately: budgets reset in the user's local day.
 test('default rules independently configure YouTube and TikTok playback', () => {
@@ -48,15 +49,20 @@ test('URL host extraction accepts only HTTP(S) and excludes credentials/path fro
   }
 });
 
-test('rule validation accepts zero and one-day limits, independent modes, and exactly 50 sites', () => {
+test('rule validation accepts independent modes and exactly 50 sites', () => {
   assert.deepEqual(validateRules([]), []);
-  assert.deepEqual(validateRules([rule({ limitMinutes: 0 }), rule({ domain: 'tiktok.com', limitMinutes: 1440, mode: 'foreground', enabled: false })]),
-    [rule({ limitMinutes: 0 }), rule({ domain: 'tiktok.com', limitMinutes: 1440, mode: 'foreground', enabled: false })]);
+  assert.deepEqual(validateRules([rule(), rule({ domain: 'tiktok.com', mode: 'foreground', enabled: false })]),
+    [rule(), rule({ domain: 'tiktok.com', mode: 'foreground', enabled: false })]);
   assert.equal(validateRules(Array.from({ length: 50 }, (_, i) => rule({ domain: `site${i}.example` }))).length, 50);
 });
 
+test('daily limit accepts the closed range from zero through one day', () => {
+  assert.equal(validateDailyLimit(0), 0);
+  assert.equal(validateDailyLimit(1440), 1440);
+});
+
 for (const limitMinutes of [-1, 1441, 0.5, NaN, Infinity, '30', null, undefined]) {
-  test(`rejects non-integer or out-of-range limit ${String(limitMinutes)}`, () => assert.throws(() => validateRules([rule({ limitMinutes })])));
+  test(`rejects non-integer or out-of-range daily limit ${String(limitMinutes)}`, () => assert.throws(() => validateDailyLimit(limitMinutes)));
 }
 
 test('rule validation rejects malformed input, unsupported modes and nonboolean enabled', () => {
@@ -72,10 +78,11 @@ test('duplicate and overlapping domain rules are rejected regardless of order or
   assert.equal(validateRules([rule({ domain: 'a.example.com' }), rule({ domain: 'b.example.com' })]).length, 2);
 });
 
-test('normalized rule output drops unrecognized keys without mutating source data', () => {
-  const source = rule({ domain: 'YOUTUBE.COM', extra: 'ignored' });
+test('normalized rule output drops per-site limits and unrecognized keys without mutating source data', () => {
+  const source = rule({ domain: 'YOUTUBE.COM', limitMinutes: 12, extra: 'ignored' });
   assert.deepEqual(validateRules([source]), [rule()]);
   assert.equal(source.domain, 'YOUTUBE.COM');
+  assert.equal(source.limitMinutes, 12);
   assert.equal(source.extra, 'ignored');
 });
 
@@ -145,6 +152,7 @@ test('different domains retain independent counters even at the same wall-clock 
   assert.equal(usedMs(ledger, 'youtube.com'), 3000);
   assert.equal(usedMs(ledger, 'tiktok.com'), 2000);
   assert.equal(usedMs(ledger, 'example.com'), 0);
+  assert.equal(totalUsedMs(ledger), 5000);
 });
 
 test('mode activation clips only new reports and preserves already-used daily budget', () => {
@@ -216,18 +224,44 @@ test('DST and non-UTC calendar boundaries use local midnight, not fixed 24-hour 
   execFileSync(process.execPath, ['--input-type=module', '-e', program], { env: { ...process.env, TZ: 'America/New_York' }, stdio: 'pipe' });
 });
 
-test('blocking switches exactly at limit and stays off for disabled rules', () => {
-  const now = instant(), config = rule({ limitMinutes: 1 });
-  const ledger = emptyLedger(now); ledger.usage['youtube.com'] = [[now - 59999, now]];
-  assert.equal(ruleStatus(config, ledger).remainingMs, 1);
-  assert.equal(ruleStatus(config, ledger).blocked, false);
-  ledger.usage['youtube.com'] = [[now - 60000, now]];
-  assert.equal(ruleStatus(config, ledger).remainingMs, 0);
-  assert.equal(ruleStatus(config, ledger).blocked, true);
+test('shared daily budget blocks exactly at the combined total and stays off for disabled rules', () => {
+  const now = instant();
+  const ledger = emptyLedger(now);
+  ledger.usage['youtube.com'] = [[now - 40000, now]];
+  ledger.usage['tiktok.com'] = [[now - 19999, now]];
+  const under = budgetOf(1, ledger);
+  assert.equal(under.usedMs, 59999);
+  assert.equal(under.remainingMs, 1);
+  assert.equal(under.blocked, false);
+  assert.equal(ruleStatus(rule(), ledger, under).blocked, false);
+  ledger.usage['tiktok.com'] = [[now - 20000, now]];
+  const exact = budgetOf(1, ledger);
+  assert.equal(exact.usedMs, 60000);
+  assert.equal(exact.blocked, true);
+  assert.equal(ruleStatus(rule(), ledger, exact).blocked, true);
+  assert.equal(ruleStatus(rule({ domain: 'tiktok.com' }), ledger, exact).blocked, true);
+  assert.equal(ruleStatus(rule({ enabled: false }), ledger, exact).blocked, false);
+  assert.equal(budgetOf(0, emptyLedger(now)).blocked, true);
   ledger.usage['youtube.com'] = [[now - 70000, now]];
-  assert.equal(ruleStatus(config, ledger).remainingMs, 0);
-  assert.equal(ruleStatus({ ...config, enabled: false }, ledger).blocked, false);
-  assert.equal(ruleStatus(rule({ limitMinutes: 0 }), emptyLedger(now)).blocked, true);
+  delete ledger.usage['tiktok.com'];
+  assert.equal(budgetOf(1, ledger).remainingMs, 0);
+});
+
+test('toolbar badge uses 1h30m above one hour and mm:ss below it', () => {
+  assert.equal(countdownBadge(0), '00:00');
+  assert.equal(countdownBadge(1), '00:01');
+  assert.equal(countdownBadge(9 * 60000 + 59000), '09:59');
+  assert.equal(countdownBadge(10 * 60000), '10:00');
+  assert.equal(countdownBadge(59 * 60000 + 59000), '59:59');
+  assert.equal(countdownBadge(60 * 60000), '1h0m');
+  assert.equal(countdownBadge(90 * 60000), '1h30m');
+  assert.equal(countdownBadge(10 * 3600000), '10h0m');
+  assert.equal(countdownBadge(10 * 3600000 + 30 * 60000), '10h30m');
+  assert.equal(countdownBadge(24 * 3600000), '24h0m');
+  assert.equal(remainingPhrase(40000), '40秒');
+  assert.equal(remainingPhrase(90000), '1分30秒');
+  assert.equal(remainingPhrase(30 * 60000), '30分');
+  assert.equal(remainingPhrase(90 * 60000), '1時間30分');
 });
 
 const media = (overrides = {}) => ({ playing: true, seeking: false, time: 10, rate: 1, ...overrides });

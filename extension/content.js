@@ -101,8 +101,9 @@
     }
   }
   chrome.runtime.onMessage.addListener((message,_sender,respond)=>{
-    if (message?.type==='BLOCK') {stopVideos();respond({ok:true});}
-    if (message?.type==='CONFIG') {configure(message.rule);respond({ok:true});}
+    // Answer before pausing or reconfiguring. Those paths message this worker back, and waiting here deadlocks it.
+    if (message?.type==='BLOCK') {respond({ok:true});stopVideos();return;}
+    if (message?.type==='CONFIG') {respond({ok:true});configure(message.rule);}
   });
   observe(document);
   const timer=setInterval(()=>pulse(),1000);

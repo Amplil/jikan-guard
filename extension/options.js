@@ -46,14 +46,13 @@ function setError(row, message, selector) {
   return input;
 }
 
-function addRow(rule = {domain: '', limitMinutes: 30, mode: 'video', enabled: true}, focus = false) {
+function addRow(rule = {domain: '', mode: 'video', enabled: true}, focus = false) {
   const row = template.content.firstElementChild.cloneNode(true);
   const domainInput = row.querySelector('.domain-input');
   const errorId = `rule-error-${++nextId}`;
   row.querySelector('.rule-error').id = errorId;
   row.querySelectorAll('input,select').forEach(input => input.setAttribute('aria-describedby', errorId));
   domainInput.value = rule.domain;
-  row.querySelector('.limit-input').value = rule.limitMinutes;
   row.querySelector('.mode-input').value = rule.mode;
   row.querySelector('.enabled-input').checked = rule.enabled !== false;
   const updateLabels = () => {
@@ -108,23 +107,23 @@ function collectRules() {
     let domain;
     try { domain = normalizeDomain(row.querySelector('.domain-input').value); }
     catch (error) { const input = setError(row, error.message, '.domain-input'); firstInvalid ||= input; continue; }
-    const value = row.querySelector('.limit-input').value.trim();
-    const limitMinutes = Number(value);
-    if (!/^\d+$/.test(value) || !Number.isInteger(limitMinutes) || limitMinutes < 0 || limitMinutes > 1440) {
-      const input = setError(row, '上限は0〜1,440の整数で入力してください', '.limit-input');
-      firstInvalid ||= input;
-      continue;
-    }
     const overlap = rules.find(rule => domain === rule.domain || domain.endsWith(`.${rule.domain}`) || rule.domain.endsWith(`.${domain}`));
     if (overlap) {
       const input = setError(row, `${overlap.domain} と範囲が重複しています。どちらか1つにしてください`, '.domain-input');
       firstInvalid ||= input;
       continue;
     }
-    rules.push({domain, limitMinutes, mode: row.querySelector('.mode-input').value, enabled: row.querySelector('.enabled-input').checked});
+    rules.push({domain, mode: row.querySelector('.mode-input').value, enabled: row.querySelector('.enabled-input').checked});
   }
   if (firstInvalid) { firstInvalid.focus(); return null; }
   return rules;
+}
+
+function readDailyLimit(value) {
+  const text = String(value ?? '').trim();
+  const minutes = Number(text);
+  if (!/^\d+$/.test(text) || !Number.isInteger(minutes) || minutes < 0 || minutes > 1440) throw new Error('上限は0〜1,440の整数で入力してください');
+  return minutes;
 }
 
 function setBusy(busy) {
@@ -134,6 +133,14 @@ function setBusy(busy) {
   saveButton.textContent = busy ? '保存しています…' : '設定を保存';
   updateCount();
 }
+
+document.getElementById('daily-limit').addEventListener('input', () => {
+  const error = document.getElementById('daily-limit-error');
+  error.hidden = true;
+  error.textContent = '';
+  document.getElementById('daily-limit').removeAttribute('aria-invalid');
+  markDirty();
+});
 
 addButton.addEventListener('click', () => {
   if (!ready || saving || list.children.length >= 50) return;
@@ -145,14 +152,32 @@ form.addEventListener('submit', async event => {
   event.preventDefault();
   if (!ready || saving) return;
   const rules = collectRules();
-  if (!rules) {setStatus('入力内容を確認してください', true); return;}
+  const limitInput = document.getElementById('daily-limit');
+  const limitError = document.getElementById('daily-limit-error');
+  let dailyLimitMinutes = null;
+  try {
+    dailyLimitMinutes = readDailyLimit(limitInput.value);
+    limitError.hidden = true;
+    limitError.textContent = '';
+    limitInput.removeAttribute('aria-invalid');
+  } catch (error) {
+    limitError.hidden = false;
+    limitError.textContent = error.message;
+    limitInput.setAttribute('aria-invalid', 'true');
+  }
+  if (dailyLimitMinutes === null || !rules) {
+    setStatus('入力内容を確認してください', true);
+    if (dailyLimitMinutes === null) limitInput.focus();
+    return;
+  }
   setBusy(true);
   setStatus('設定を保存しています…');
   try {
-    const state = await chrome.runtime.sendMessage({type: 'SAVE_SETTINGS', rules});
+    const state = await withTimeout(chrome.runtime.sendMessage({type: 'SAVE_SETTINGS', dailyLimitMinutes, rules}));
     if (!state?.ok || !Array.isArray(state.rules)) throw new Error(state?.error || '保存できませんでした');
     // Refresh only after this explicit save, never while the user is editing.
     list.replaceChildren();
+    document.getElementById('daily-limit').value = state.dailyLimitMinutes;
     (Array.isArray(state.rules) ? state.rules : rules).forEach(rule => addRow(rule));
     dirty = false;
     setStatus('保存しました');
@@ -165,10 +190,19 @@ window.addEventListener('beforeunload', event => {
   if (dirty) {event.preventDefault(); event.returnValue = '';}
 });
 
+function withTimeout(promise, ms = 8000) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('応答がありません。ページを再読み込みしてください')), ms);
+  });
+  return Promise.race([promise.finally(() => clearTimeout(timer)), timeout]);
+}
+
 async function initialize() {
   try {
-    const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+    const state = await withTimeout(chrome.runtime.sendMessage({type: 'GET_STATE'}));
     if (!state?.ok || !Array.isArray(state.rules)) throw new Error(state?.error || '設定を取得できませんでした');
+    document.getElementById('daily-limit').value = state.dailyLimitMinutes;
     (Array.isArray(state.rules) ? state.rules : []).forEach(rule => addRow(rule));
     ready = true;
     saveButton.disabled = false;

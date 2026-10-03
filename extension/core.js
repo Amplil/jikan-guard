@@ -1,9 +1,10 @@
 /** Pure counter and validation functions. All intervals are elapsed wall-clock ms. */
 import './media.js';
 export const MAX_GAP_MS = globalThis.JikanMedia.MAX_GAP_MS;
+export const DEFAULT_DAILY_LIMIT_MINUTES = 30;
 export const DEFAULT_RULES = Object.freeze([
-  { domain: 'youtube.com', limitMinutes: 30, mode: 'video', enabled: true },
-  { domain: 'tiktok.com', limitMinutes: 30, mode: 'video', enabled: true }
+  { domain: 'youtube.com', mode: 'video', enabled: true },
+  { domain: 'tiktok.com', mode: 'video', enabled: true }
 ]);
 export function localDay(now = Date.now()) {
   const d = new Date(now);
@@ -29,16 +30,18 @@ export function normalizeDomain(input) {
   if (!domain.includes('.') || !domain.split('.').every(p => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(p)) || /^\d+(\.\d+){3}$/.test(domain)) throw new Error('正しいドメインを入力してください（IPアドレス・localhostは対象外）');
   return domain;
 }
+export function validateDailyLimit(value) {
+  if (!Number.isInteger(value) || value < 0 || value > 1440) throw new Error('上限は0〜1440分の整数で入力してください');
+  return value;
+}
 export function validateRules(input) {
   if (!Array.isArray(input) || input.length > 50) throw new Error('登録できるサイトは50件までです');
   const result = input.map(r => {
     if (!r || typeof r !== 'object') throw new Error('設定の形式が正しくありません');
     const domain = normalizeDomain(r.domain);
-    const limitMinutes = r.limitMinutes;
-    if (!Number.isInteger(limitMinutes) || limitMinutes < 0 || limitMinutes > 1440) throw new Error('上限は0〜1440分の整数で入力してください');
     if (!['video','foreground'].includes(r.mode)) throw new Error('計測方法を選んでください');
     if (typeof r.enabled !== 'boolean') throw new Error('有効・無効の設定が正しくありません');
-    return {domain, limitMinutes, mode:r.mode, enabled:r.enabled};
+    return {domain, mode:r.mode, enabled:r.enabled};
   });
   for (let i=0;i<result.length;i++) for (let j=0;j<i;j++) {
     if (hostMatches(result[i].domain,result[j].domain) || hostMatches(result[j].domain,result[i].domain)) throw new Error(`${result[i].domain} と ${result[j].domain} は重複しています。親ドメインだけを登録してください`);
@@ -61,6 +64,13 @@ export function mergeIntervals(intervals, start, end) {
   return merged;
 }
 export function usedMs(ledger, domain) { return (ledger.usage[domain] || []).reduce((s,[a,b])=>s+b-a,0); }
+export function totalUsedMs(ledger) {
+  return Object.values(ledger?.usage || {}).reduce((sum, spans) => sum + spans.reduce((total, [start, end]) => total + end - start, 0), 0);
+}
+export function budgetOf(limitMinutes, ledger) {
+  const used = totalUsedMs(ledger), remaining = Math.max(0, limitMinutes * 60000 - used);
+  return {limitMinutes, usedMs: used, remainingMs: remaining, blocked: remaining <= 0};
+}
 /** Reject stale/sleep spans; trim to today and the latest mode activation. */
 export function creditInterval(ledger, domain, start, end, now=Date.now(), since=0) {
   const next=rollover(ledger,now);
@@ -69,9 +79,24 @@ export function creditInterval(ledger, domain, start, end, now=Date.now(), since
   if (e>s) next.usage[domain]=mergeIntervals(next.usage[domain] || [],s,e);
   return next;
 }
-export function ruleStatus(rule, ledger) {
-  const used = usedMs(ledger,rule.domain), remaining=Math.max(0,rule.limitMinutes*60000-used);
-  return {...rule,usedMs:used,remainingMs:remaining,blocked:rule.enabled && remaining<=0};
+export function ruleStatus(rule, ledger, budget) {
+  return {...rule, usedMs: usedMs(ledger, rule.domain), remainingMs: budget.remainingMs, blocked: Boolean(rule.enabled && budget.blocked)};
+}
+/** 1h30m while an hour remains. Below one hour, mm:ss so seconds can tick. */
+export function countdownBadge(remainingMs) {
+  const seconds = Math.max(0, Math.ceil((Number(remainingMs) || 0) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours >= 1) return `${hours}h${minutes}`;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+export function remainingPhrase(ms) {
+  const seconds = Math.max(0, Math.ceil((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  if (hours > 0) return `${hours}時間${minutes % 60 ? `${minutes % 60}分` : ''}`;
+  if (minutes > 0) return `${minutes}分${seconds % 60 ? `${seconds % 60}秒` : ''}`;
+  return `${seconds}秒`;
 }
 /** Validate actual media advance; never count the seek jump or playback-speed multiplier. */
 export const mediaAdvanced = globalThis.JikanMedia.advanced;

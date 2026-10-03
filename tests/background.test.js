@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { localDay, nextMidnight } from '../extension/core.js';
 
-const RULE = { domain: 'youtube.com', limitMinutes: 1, mode: 'video', enabled: true };
+const RULE = { domain: 'youtube.com', mode: 'video', enabled: true };
 const NOW = +new Date(2026, 9, 2, 12);
 let importId = 0;
 const copy = (value) => value === undefined ? undefined : structuredClone(value);
@@ -10,7 +10,7 @@ const event = () => {
   const listeners = [];
   return { addListener: (fn) => listeners.push(fn), listeners, emit: (...args) => listeners.forEach(fn => fn(...args)) };
 };
-const state = (rules = [RULE], usage = {}, at = NOW) => ({ schema: 1, rules: copy(rules), since: {}, ledger: { day: localDay(at), usage: copy(usage) } });
+const state = (rules = [RULE], usage = {}, at = NOW, dailyLimitMinutes = 1) => ({ schema: 1, dailyLimitMinutes, rules: copy(rules), since: {}, ledger: { day: localDay(at), usage: copy(usage) } });
 
 async function harness(options = {}) {
   const oldChrome = globalThis.chrome, oldNow = Date.now;
@@ -20,19 +20,19 @@ async function harness(options = {}) {
   const windows = new Map((options.windows ?? [{ id: 11, focused: true, state: 'normal' }]).map(win => [win.id, copy(win)]));
   let dynamicRules = copy(options.dynamicRules ?? []);
   const alarms = new Map();
-  const calls = { storageWrites: [], tabMessages: [], tabUpdates: [], injections: [], dynamicUpdates: [], badges: [], openOptions: 0 };
+  const calls = { storageWrites: [], tabMessages: [], tabUpdates: [], injections: [], dynamicUpdates: [], badges: [], badgeColors: [], titles: [], openOptions: 0 };
   const api = {
     runtime: { id: 'test-extension', getURL: (path = '') => `chrome-extension://test-extension/${path}`,
       onMessage: event(), onStartup: event(), onInstalled: event(),
       openOptionsPage: async () => { calls.openOptions++; } },
-    storage: { local: { setAccessLevel: async () => {}, get: async () => copy(storage),
+    storage: { local: { setAccessLevel: async () => { if (options.hangAccessLevel) await new Promise(() => {}); }, get: async () => copy(storage),
       set: async (updates) => { Object.assign(storage, copy(updates)); calls.storageWrites.push(copy(updates)); } } },
     alarms: { onAlarm: event(), get: async name => copy(alarms.get(name)),
       create: async (name, alarm) => { alarms.set(name, copy(alarm)); } },
     tabs: { onUpdated: event(), onActivated: event(), onRemoved: event(),
       get: async id => { if (!tabs.has(id)) throw Error('No tab'); return copy(tabs.get(id)); },
       query: async () => Array.from(tabs.values(), copy),
-      sendMessage: async (id, message) => { calls.tabMessages.push({ id, message: copy(message) }); return { ok: true }; },
+      sendMessage: async (id, message) => { calls.tabMessages.push({ id, message: copy(message) }); if (options.hangTabMessages) await new Promise(() => {}); return { ok: true }; },
       update: async (id, updates) => { calls.tabUpdates.push({ id, updates: copy(updates) }); Object.assign(tabs.get(id), updates); return copy(tabs.get(id)); } },
     windows: { WINDOW_ID_NONE: -1, onFocusChanged: event(), get: async id => {
       if (!windows.has(id)) throw Error('No window'); return copy(windows.get(id));
@@ -41,7 +41,8 @@ async function harness(options = {}) {
       calls.dynamicUpdates.push(copy(update));
       dynamicRules = [...dynamicRules.filter(rule => !update.removeRuleIds.includes(rule.id)), ...copy(update.addRules)];
     } },
-    action: { setBadgeBackgroundColor: async () => {}, setBadgeText: async value => { calls.badges.push(copy(value)); } },
+    action: { setBadgeBackgroundColor: async value => { calls.badgeColors.push(copy(value)); }, setBadgeTextColor: async () => {},
+      setBadgeText: async value => { calls.badges.push(copy(value)); }, setTitle: async value => { calls.titles.push(copy(value)); } },
     scripting: { executeScript: async value => { calls.injections.push(copy(value)); } }
   };
   Date.now = () => now;
@@ -69,7 +70,10 @@ const total = (h, domain = 'youtube.com') => (h.storage.state.ledger.usage[domai
 
 test('worker startup creates durable defaults, recovery alarms, and reconciles stale dynamic rules', async () => using({ dynamicRules: [{ id: 88 }] }, async h => {
   assert.equal(h.storage.state.schema, 1);
+  assert.equal(h.storage.state.dailyLimitMinutes, 30);
   assert.deepEqual(h.storage.state.rules.map(rule => rule.domain), ['youtube.com', 'tiktok.com']);
+  assert.equal(h.calls.badges.at(-1).text, '30:00');
+  assert.match(h.calls.titles.at(-1).title, /あと30分/);
   assert.equal(h.alarms.get('reconcile').periodInMinutes, 0.5);
   assert.equal(h.alarms.get('midnight').when, nextMidnight(NOW));
   assert.deepEqual(h.dynamicRules(), []);
@@ -90,7 +94,7 @@ test('persisted exhausted budgets restore main-frame blocking and stop matching 
 }));
 
 test('only this extension own pages can get state or change settings', async () => using({ state: state() }, async h => {
-  const okay = await h.send({ type: 'GET_STATE' }); assert.equal(okay.ok, true); assert.equal(okay.rules[0].remainingMs, 60000);
+  const okay = await h.send({ type: 'GET_STATE' }); assert.equal(okay.ok, true); assert.equal(okay.dailyLimitMinutes, 1); assert.equal(okay.remainingMs, 60000); assert.equal(okay.rules[0].remainingMs, 60000);
   for (const sender of [h.content(), { id: 'other-extension', url: h.trusted.url }, { id: h.api.runtime.id, url: 'https://example.com' }]) {
     assert.equal((await h.send({ type: 'GET_STATE' }, sender)).ok, false);
     assert.equal((await h.send({ type: 'SAVE_SETTINGS', rules: [] }, sender)).ok, false);
@@ -101,20 +105,27 @@ test('only this extension own pages can get state or change settings', async () 
 }));
 
 test('settings normalize domains and preserve usage across limit, mode, removal and re-add changes', async () => using({ state: state([RULE], { 'youtube.com': [[NOW - 5000, NOW]] }) }, async h => {
-  let response = await h.send({ type: 'SAVE_SETTINGS', rules: [{ ...RULE, domain: 'YouTube.COM.', limitMinutes: 2 }] });
-  assert.equal(response.ok, true); assert.equal(response.rules[0].usedMs, 5000); assert.equal(h.storage.state.since['youtube.com'], undefined);
-  response = await h.send({ type: 'SAVE_SETTINGS', rules: [{ ...RULE, mode: 'foreground' }] });
+  let response = await h.send({ type: 'SAVE_SETTINGS', dailyLimitMinutes: 2, rules: [{ ...RULE, domain: 'YouTube.COM.' }] });
+  assert.equal(response.ok, true); assert.equal(response.dailyLimitMinutes, 2); assert.equal(response.usedMs, 5000); assert.equal(response.rules[0].usedMs, 5000); assert.equal(h.storage.state.since['youtube.com'], undefined);
+  response = await h.send({ type: 'SAVE_SETTINGS', dailyLimitMinutes: 2, rules: [{ ...RULE, mode: 'foreground' }] });
   assert.equal(response.rules[0].usedMs, 5000); assert.equal(h.storage.state.since['youtube.com'], NOW);
-  assert.equal((await h.send({ type: 'SAVE_SETTINGS', rules: [] })).ok, true);
+  assert.equal((await h.send({ type: 'SAVE_SETTINGS', dailyLimitMinutes: 2, rules: [] })).ok, true);
   h.setNow(NOW + 1000);
-  response = await h.send({ type: 'SAVE_SETTINGS', rules: [RULE] });
+  response = await h.send({ type: 'SAVE_SETTINGS', dailyLimitMinutes: 2, rules: [RULE] });
   assert.equal(response.rules[0].usedMs, 5000); assert.equal(h.storage.state.since['youtube.com'], NOW + 1000);
 }));
 
 test('invalid settings fail atomically without replacing saved rules', async () => using({ state: state() }, async h => {
-  for (const rules of [[{ ...RULE, limitMinutes: -1 }], [RULE, { ...RULE, domain: 'm.youtube.com' }], [{ ...RULE, enabled: 'true' }]]) {
-    assert.equal((await h.send({ type: 'SAVE_SETTINGS', rules })).ok, false);
+  for (const message of [
+    { type: 'SAVE_SETTINGS', rules: [RULE] },
+    { type: 'SAVE_SETTINGS', dailyLimitMinutes: -1, rules: [RULE] },
+    { type: 'SAVE_SETTINGS', dailyLimitMinutes: 1.5, rules: [RULE] },
+    { type: 'SAVE_SETTINGS', dailyLimitMinutes: 1, rules: [RULE, { ...RULE, domain: 'm.youtube.com' }] },
+    { type: 'SAVE_SETTINGS', dailyLimitMinutes: 1, rules: [{ ...RULE, enabled: 'true' }] }
+  ]) {
+    assert.equal((await h.send(message)).ok, false);
     assert.deepEqual(h.storage.state.rules, [RULE]);
+    assert.equal(h.storage.state.dailyLimitMinutes, 1);
   }
 }));
 
@@ -137,14 +148,23 @@ test('reports on an unconfigured or disabled site do not consume a budget', asyn
   assert.equal(total(h), 0);
 }));
 
-test('foreground mode requires top frame, active tab, focused nonminimized window, and foreground evidence', async () => using({ state: state([{ ...RULE, mode: 'foreground' }]) }, async h => {
-  const foreground = report([span(NOW - 1000, NOW, { foreground: true })]);
-  await h.send(foreground, h.content(1, 7)); assert.equal(total(h), 0);
-  h.tabs.get(1).active = false; await h.send(foreground, h.content()); assert.equal(total(h), 0);
-  h.tabs.get(1).active = true; h.windows.get(11).focused = false; await h.send(foreground, h.content()); assert.equal(total(h), 0);
-  h.windows.get(11).focused = true; h.windows.get(11).state = 'minimized'; await h.send(foreground, h.content()); assert.equal(total(h), 0);
-  h.windows.get(11).state = 'normal'; await h.send(report([span(NOW - 1000, NOW)]), h.content()); assert.equal(total(h), 0);
-  await h.send(foreground, h.content()); assert.equal(total(h), 1000);
+test('foreground mode counts a selected tab in a visible unfocused window and skips hidden tabs and minimized windows', async () => using({ state: state([{ ...RULE, mode: 'foreground' }]) }, async h => {
+  const foreground = (start, end) => report([span(start, end, { video: false, foreground: true })]);
+  await h.send(foreground(NOW - 5000, NOW - 4000), h.content(1, 7));
+  assert.equal(total(h), 0);
+  h.tabs.get(1).active = false;
+  await h.send(foreground(NOW - 4000, NOW - 3000), h.content());
+  assert.equal(total(h), 0);
+  h.tabs.get(1).active = true;
+  h.windows.get(11).focused = false;
+  h.windows.get(11).state = 'minimized';
+  await h.send(foreground(NOW - 3000, NOW - 2000), h.content());
+  assert.equal(total(h), 0);
+  h.windows.get(11).state = 'normal';
+  await h.send(report([span(NOW - 2000, NOW - 1000)]), h.content());
+  assert.equal(total(h), 0);
+  await h.send(foreground(NOW - 1000, NOW), h.content());
+  assert.equal(total(h), 1000);
 }));
 
 test('content reports reject foreign extension senders and invalid envelope shapes', async () => using({ state: state() }, async h => {
@@ -168,7 +188,8 @@ test('a report reaching the exact limit blocks all same-domain tabs and updates 
   assert.equal(response.blocked, true); assert.equal(total(h), 60000);
   assert.deepEqual(h.calls.tabUpdates.map(call => call.id), [1, 2]);
   assert.equal(h.dynamicRules().length, 1);
-  assert.equal(h.calls.badges.at(-1).text, '1');
+  assert.equal(h.calls.badges.at(-1).text, '00:00');
+  assert.match(h.calls.titles.at(-1).title, /今日の上限です/);
 }));
 
 test('midnight recovery clears yesterday usage and its persistent blocking rules', async () => using({ state: state([RULE], { 'youtube.com': [[NOW - 60000, NOW]] }) }, async h => {
@@ -191,7 +212,7 @@ test('concurrent reports serialize persistence and cannot lose or double-count u
 }));
 
 test('reports cannot backfill time before the most recent mode activation', async () => using({ state: state() }, async h => {
-  await h.send({ type: 'SAVE_SETTINGS', rules: [{ ...RULE, mode: 'foreground' }] });
+  await h.send({ type: 'SAVE_SETTINGS', dailyLimitMinutes: 1, rules: [{ ...RULE, mode: 'foreground' }] });
   h.setNow(NOW + 1000);
   await h.send(report([span(NOW - 2000, NOW + 1000, { foreground: true })]), h.content());
   assert.equal(total(h), 1000);
@@ -266,4 +287,76 @@ test('recovery alarm retries a blocked-page redirect after a transient tabs.upda
   assert.equal(attempts, 2);
   assert.equal(h.calls.dynamicUpdates.length, rulesetWrites, 'retry does not rewrite an unchanged DNR ruleset');
   assert.match(h.tabs.get(1).url, /^chrome-extension:\/\/test-extension\/blocked\.html/);
+}));
+
+test('legacy per-site limits become one shared daily total, capped at one day', async () => using({
+  state: { schema: 1, rules: [
+    { domain: 'youtube.com', limitMinutes: 30, mode: 'video', enabled: true },
+    { domain: 'tiktok.com', limitMinutes: 45, mode: 'foreground', enabled: true }
+  ], since: {}, ledger: { day: localDay(NOW), usage: {} } }
+}, async h => {
+  assert.equal(h.storage.state.dailyLimitMinutes, 75);
+  assert.equal('limitMinutes' in h.storage.state.rules[0], false);
+}));
+
+test('legacy limits above one day clamp to 1440 minutes', async () => using({
+  state: { schema: 1, rules: [
+    { domain: 'youtube.com', limitMinutes: 800, mode: 'video', enabled: true },
+    { domain: 'tiktok.com', limitMinutes: 800, mode: 'video', enabled: true }
+  ], since: {}, ledger: { day: localDay(NOW), usage: {} } }
+}, async h => {
+  assert.equal(h.storage.state.dailyLimitMinutes, 1440);
+}));
+
+test('toolbar countdown hides when no site is enabled', async () => using({
+  state: state([{ ...RULE, enabled: false }])
+}, async h => {
+  assert.equal(h.calls.badges.at(-1).text, '');
+  assert.equal(h.calls.titles.at(-1).title, 'じかんガード');
+}));
+
+test('combined usage of different sites shares one daily total and blocks every enabled site', async () => using({
+  state: state([RULE, { domain: 'tiktok.com', mode: 'video', enabled: true }], {
+    'youtube.com': [[NOW - 30000, NOW - 10000]],
+    'tiktok.com': [[NOW - 50000, NOW - 15000]]
+  }, NOW, 1),
+  tabs: [
+    { id: 1, windowId: 11, url: 'https://www.youtube.com/watch?v=1', active: true },
+    { id: 2, windowId: 12, url: 'https://www.tiktok.com/@a/video/1', active: true }
+  ],
+  windows: [
+    { id: 11, focused: true, state: 'normal' },
+    { id: 12, focused: false, state: 'normal' }
+  ]
+}, async h => {
+  assert.equal(h.calls.badges.at(-1).text, '00:05');
+  assert.match(h.calls.titles.at(-1).title, /あと5秒/);
+  assert.equal(h.calls.badgeColors.at(-1).color, '#9F4039');
+  await h.send(report([span(NOW - 5000, NOW)]), h.content(2));
+  assert.equal(total(h, 'tiktok.com'), 40000);
+  const response = await h.send({ type: 'GET_STATE' });
+  assert.equal(response.usedMs, 60000);
+  assert.equal(response.blocked, true);
+  assert.equal(response.rules.every(rule => rule.blocked), true);
+  assert.deepEqual(h.dynamicRules().map(rule => rule.condition.requestDomains[0]).sort(), ['tiktok.com', 'youtube.com']);
+  assert.deepEqual([...new Set(h.calls.tabUpdates.map(call => call.id))].sort(), [1, 2]);
+  assert.equal(h.calls.badges.at(-1).text, '00:00');
+}));
+
+test('settings still load when storage access locking never settles', { timeout: 3000 }, async () => using({ hangAccessLevel: true, state: state() }, async h => {
+  const response = await h.send({ type: 'GET_STATE' });
+  assert.equal(response.ok, true);
+  assert.equal(response.dailyLimitMinutes, 1);
+  assert.equal(response.rules[0].domain, 'youtube.com');
+}));
+
+test('a tab that never answers cannot block settings', { timeout: 4000 }, async () => using({
+  hangTabMessages: true,
+  state: state([RULE], { 'youtube.com': [[NOW - 60000, NOW]] })
+}, async h => {
+  const started = performance.now();
+  const response = await h.send({ type: 'GET_STATE' });
+  assert.equal(response.ok, true);
+  assert.equal(response.blocked, true);
+  assert.ok(performance.now() - started < 3000);
 }));

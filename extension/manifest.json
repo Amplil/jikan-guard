@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "じかんガード",
   "version": "0.1.0",
-  "description": "サイトごとに動画再生時間・前面タブ時間を選べる、1日の時間制限。データは端末内のみ。",
+  "description": "登録サイトの使用時間を1日の合計で制限。ピン留めアイコンに残り時間を表示。データは端末内のみ。",
   "minimum_chrome_version": "120",
   "permissions": [
     "storage",

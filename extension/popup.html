@@ -18,9 +18,14 @@
       <div><p class="eyebrow">TODAY'S BALANCE</p><h2>今日の、のこり時間</h2></div>
       <span id="today" class="date-label"></span>
     </section>
+    <section id="budget-hero" class="budget-hero">
+      <div class="remaining-line"><strong id="remaining">—</strong><span>のこり</span></div>
+      <div id="budget-track" class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="今日の合計使用時間"><div id="budget-fill" class="progress-fill" style="width:0"></div></div>
+      <p id="budget-meta" class="budget-meta"></p>
+    </section>
     <p id="popup-status" class="status-message" role="status" aria-live="polite">利用状況を読み込んでいます…</p>
-    <div id="site-list" class="site-list" aria-label="サイトごとの利用状況"></div>
-    <div id="empty-state" class="empty-state" hidden><p class="empty-symbol" aria-hidden="true">◷</p><h2>時間の使い方を、自分で決めよう</h2><p>設定からサイトと1日の上限を追加できます</p></div>
+    <div id="site-list" class="site-list" aria-label="サイトごとの使用時間"></div>
+    <div id="empty-state" class="empty-state" hidden><p class="empty-symbol" aria-hidden="true">◷</p><h2>時間の使い方を、自分で決めよう</h2><p>設定から、時間を数えたいサイトを追加できます</p></div>
     <footer class="popup-footer"><span class="privacy-dot" aria-hidden="true"></span><span>この端末だけに記録 · 毎日0時にリセット</span></footer>
   </main>
 </body>

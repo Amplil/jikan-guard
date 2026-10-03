@@ -30,8 +30,10 @@ function render(state, requested) {
   const available = !rule || rule.enabled === false || !rule.blocked;
   checkButton.textContent = available ? 'サイトに戻る' : 'もう一度確認';
   title.textContent = available ? 'また、あなたのペースで。' : '今日は、ここまで。';
-  description.textContent = available ? 'このサイトを利用できます。ボタンから戻れます' : 'このサイトの、今日の時間を使い切りました';
-  budget.textContent = !rule ? '制限の対象外' : rule.enabled === false ? '制限オフ' : available ? `のこり ${duration(rule.remainingMs)}` : `1日 ${rule.limitMinutes}分`;
+  description.textContent = available ? 'このサイトを利用できます。ボタンから戻れます' : '今日の合計時間を使い切りました';
+  const limitLabel = Number.isInteger(state.dailyLimitMinutes) ? state.dailyLimitMinutes : 0;
+  const remaining = Number.isFinite(Number(state.remainingMs)) ? state.remainingMs : 0;
+  budget.textContent = !rule ? '制限の対象外' : rule.enabled === false ? '制限オフ' : available ? `のこり ${duration(remaining)}` : `1日の合計 ${limitLabel}分`;
   resetNote.hidden = available;
   if (requested && available) {location.replace(`https://${domain}/`); return;}
   if (requested) say('今日の上限に達しています。また明日お会いしましょう');

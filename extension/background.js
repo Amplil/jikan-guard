@@ -1,6 +1,13 @@
-import {DEFAULT_RULES,validateRules,ruleFor,hostOf,rollover,creditInterval,ruleStatus,nextMidnight} from './core.js';
+import {DEFAULT_DAILY_LIMIT_MINUTES,DEFAULT_RULES,validateDailyLimit,validateRules,ruleFor,hostOf,rollover,creditInterval,budgetOf,ruleStatus,countdownBadge,remainingPhrase,nextMidnight} from './core.js';
 
 let data, queue=Promise.resolve(), blockingSignature;
+// Discarded tabs and content scripts waiting on this worker can leave Chrome APIs pending forever.
+function within(promise,ms=1000) {
+  let timer;
+  const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('応答がタイムアウトしました')),ms);});
+  return Promise.race([Promise.resolve(promise),timeout]).finally(()=>clearTimeout(timer));
+}
+function attempt(work,ms=1000) { return within(Promise.resolve().then(work),ms).catch(()=>{}); }
 // All mutation is serialized, including asynchronous storage and ruleset writes.
 function run(task) {
   const result=queue.then(async()=>{await load();return task();});
@@ -9,67 +16,90 @@ function run(task) {
 }
 async function load() {
   if (data) return;
-  await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
+  // Do not await: on some Chrome versions this call never settles and would freeze every settings read.
+  try { void chrome.storage.local.setAccessLevel?.({accessLevel:'TRUSTED_CONTEXTS'})?.catch(()=>{}); } catch { /* local.setAccessLevel is absent before Chrome 140 */ }
   const stored=await chrome.storage.local.get('state');
   if (stored.state?.schema===1) {
-    data=stored.state;
-    data.rules=validateRules(data.rules);
-    data.since=data.since || {};
-    data.ledger=rollover(data.ledger);
-  } else data={schema:1,rules:structuredClone(DEFAULT_RULES),since:{},ledger:rollover(null)};
+    const saved=stored.state;
+    const rawLimit=adoptDailyLimit(saved);
+    data={schema:1,dailyLimitMinutes:Math.min(1440,Math.max(0,rawLimit)),rules:validateRules(saved.rules),since:saved.since || {},ledger:rollover(saved.ledger)};
+  } else data={schema:1,dailyLimitMinutes:DEFAULT_DAILY_LIMIT_MINUTES,rules:structuredClone(DEFAULT_RULES),since:{},ledger:rollover(null)};
   await save();
-  if (!(await chrome.alarms.get('reconcile'))) await chrome.alarms.create('reconcile',{periodInMinutes:0.5});
-  await chrome.alarms.create('midnight',{when:nextMidnight(Date.now())});
+  const existing=await within(chrome.alarms.get('reconcile')).catch(()=>true);
+  if (!existing) await within(chrome.alarms.create('reconcile',{periodInMinutes:0.5})).catch(()=>{});
+  await within(chrome.alarms.create('midnight',{when:nextMidnight(Date.now())})).catch(()=>{});
 }
 async function save() { await chrome.storage.local.set({state:data}); }
+function adoptDailyLimit(saved) {
+  if (Number.isInteger(saved?.dailyLimitMinutes)) return saved.dailyLimitMinutes;
+  const rules=Array.isArray(saved?.rules) ? saved.rules : [];
+  if (rules.some(rule=>Number.isInteger(rule?.limitMinutes))) return rules.reduce((sum,rule)=>sum+(Number.isInteger(rule?.limitMinutes) ? rule.limitMinutes : 0),0);
+  return DEFAULT_DAILY_LIMIT_MINUTES;
+}
+function budget() { return budgetOf(data.dailyLimitMinutes,data.ledger); }
 function publicState() {
-  return {ok:true,day:data.ledger.day,rules:data.rules.map(r=>ruleStatus(r,data.ledger))};
+  const today=budget();
+  return {ok:true,day:data.ledger.day,dailyLimitMinutes:today.limitMinutes,usedMs:today.usedMs,remainingMs:today.remainingMs,blocked:today.blocked,rules:data.rules.map(rule=>ruleStatus(rule,data.ledger,today))};
+}
+async function paintCountdown(today=budget()) {
+  if (!data.rules.some(rule=>rule.enabled)) {
+    await chrome.action.setBadgeText({text:''});
+    await chrome.action.setTitle({title:'じかんガード'});
+    return;
+  }
+  const urgent=today.blocked || today.remainingMs<=5*60*1000;
+  await chrome.action.setBadgeBackgroundColor({color:urgent ? '#9F4039' : '#245FC8'});
+  await chrome.action.setBadgeTextColor({color:'#FFFFFF'});
+  await chrome.action.setBadgeText({text:countdownBadge(today.remainingMs)});
+  await chrome.action.setTitle({title:today.blocked ? 'じかんガード: 今日の上限です' : `じかんガード: あと${remainingPhrase(today.remainingMs)}`});
 }
 async function freshDay() {
   const before=data.ledger.day;
   data.ledger=rollover(data.ledger);
   if (before!==data.ledger.day) {
     await save();
-    await chrome.alarms.create('midnight',{when:nextMidnight(Date.now())});
+    await within(chrome.alarms.create('midnight',{when:nextMidnight(Date.now())})).catch(()=>{});
   }
 }
 function blockUrl(domain) { return chrome.runtime.getURL(`blocked.html?domain=${encodeURIComponent(domain)}`); }
 async function enforceTab(tab) {
   const rule=ruleFor(data.rules,hostOf(tab.pendingUrl || tab.url || ''));
-  if (!rule || !ruleStatus(rule,data.ledger).blocked || !Number.isInteger(tab.id)) return;
+  if (!rule || !ruleStatus(rule,data.ledger,budget()).blocked || !Number.isInteger(tab.id)) return;
   // Stop open video immediately, then replace the complete page (also handles SPAs).
-  await chrome.tabs.sendMessage(tab.id,{type:'BLOCK'}).catch(()=>{});
-  await chrome.tabs.update(tab.id,{url:blockUrl(rule.domain)}).catch(()=>{});
+  await attempt(()=>chrome.tabs.sendMessage(tab.id,{type:'BLOCK'}));
+  await attempt(()=>chrome.tabs.update(tab.id,{url:blockUrl(rule.domain)}));
 }
 async function enforceBlockedTabs() {
-  for (const tab of await chrome.tabs.query({})) await enforceTab(tab);
+  await Promise.all((await chrome.tabs.query({})).map(tab=>enforceTab(tab)));
 }
 async function syncBlocking(force=false, retryOpenTabs=false) {
-  const domains=data.rules.filter(r=>ruleStatus(r,data.ledger).blocked).map(r=>r.domain).sort();
+  const today=budget();
+  const domains=today.blocked ? data.rules.filter(rule=>rule.enabled).map(rule=>rule.domain).sort() : [];
   const signature=JSON.stringify(domains);
   if (!force && signature===blockingSignature) {
     // Chrome can temporarily reject tabs.update (for example while dragging a tab).
     // A saved DNR rule alone cannot replace an already-loaded page.
     if (retryOpenTabs && domains.length) await enforceBlockedTabs();
-    return;
+  } else {
+    try {
+      const old=await within(chrome.declarativeNetRequest.getDynamicRules());
+      await within(chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds:old.map(r=>r.id),
+        addRules:domains.map((domain,index)=>({id:index+1,priority:1,
+          action:{type:'redirect',redirect:{url:blockUrl(domain)}},
+          condition:{requestDomains:[domain],resourceTypes:['main_frame']}}))
+      }));
+      blockingSignature=signature;
+    } catch (error) { console.error('じかんガード:',error); }
+    await enforceBlockedTabs();
   }
-  const old=await chrome.declarativeNetRequest.getDynamicRules();
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds:old.map(r=>r.id),
-    addRules:domains.map((domain,index)=>({id:index+1,priority:1,
-      action:{type:'redirect',redirect:{url:blockUrl(domain)}},
-      condition:{requestDomains:[domain],resourceTypes:['main_frame']}}))
-  });
-  blockingSignature=signature;
-  await chrome.action.setBadgeBackgroundColor({color:'#B34834'});
-  await chrome.action.setBadgeText({text:domains.length ? String(domains.length) : ''});
-  await enforceBlockedTabs();
+  await paintCountdown(today);
 }
 async function broadcastConfig() {
-  for (const tab of await chrome.tabs.query({})) {
+  await Promise.all((await chrome.tabs.query({})).map(tab=>{
     const rule=ruleFor(data.rules,hostOf(tab.url || '')) || null;
-    await chrome.tabs.sendMessage(tab.id,{type:'CONFIG',rule}).catch(()=>{});
-  }
+    return attempt(()=>chrome.tabs.sendMessage(tab.id,{type:'CONFIG',rule}));
+  }));
 }
 async function handle(message,sender) {
   await freshDay();
@@ -78,12 +108,13 @@ async function handle(message,sender) {
   if (message.type==='GET_STATE' && trusted) {await syncBlocking();return publicState();}
   if (message.type==='OPEN_OPTIONS' && trusted) {await chrome.runtime.openOptionsPage();return {ok:true};}
   if (message.type==='SAVE_SETTINGS' && trusted) {
-    const rules=validateRules(message.rules), now=Date.now();
+    const rules=validateRules(message.rules), dailyLimitMinutes=validateDailyLimit(message.dailyLimitMinutes), now=Date.now();
     for (const r of rules) {
       const old=data.rules.find(x=>x.domain===r.domain);
       if (!old || old.mode!==r.mode || old.enabled!==r.enabled) data.since[r.domain]=now;
     }
     // Today's usage survives mode/limit changes, removal, and re-addition.
+    data.dailyLimitMinutes=dailyLimitMinutes;
     data.rules=rules;
     await save();await syncBlocking(true);await broadcastConfig();return publicState();
   }
@@ -96,12 +127,13 @@ async function handle(message,sender) {
   // A report queued by the previous document must never charge its new destination.
   if (hostOf(sender.tab.url || '')!==hostOf(tab.url || '')) return {ok:true,rule:null};
   if (!rule?.enabled) return {ok:true,rule:rule || null};
-  if (ruleStatus(rule,data.ledger).blocked) {await enforceTab(tab);return {ok:true,blocked:true};}
+  if (ruleStatus(rule,data.ledger,budget()).blocked) {await enforceTab(tab);return {ok:true,blocked:true};}
   if (!Array.isArray(message.intervals) || message.intervals.length>64) throw new Error('計測データの形式が正しくありません');
   let foreground=false;
+  // Count the selected tab of every non-minimized window, including one beside the focused window.
   if (rule.mode==='foreground' && sender.frameId===0 && tab.active) {
     const win=await chrome.windows.get(tab.windowId).catch(()=>null);
-    foreground=Boolean(win?.focused && win.state!=='minimized');
+    foreground=Boolean(win && win.state!=='minimized');
   }
   const now=Date.now();
   for (const span of message.intervals) {
@@ -109,7 +141,8 @@ async function handle(message,sender) {
     data.ledger=creditInterval(data.ledger,rule.domain,span.start,span.end,now,data.since[rule.domain] || 0);
   }
   await save();await syncBlocking();
-  return {ok:true,rule,blocked:ruleStatus(rule,data.ledger).blocked};
+  const today=budget();
+  return {ok:true,rule:ruleStatus(rule,data.ledger,today),blocked:today.blocked && rule.enabled};
 }
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   run(()=>handle(message,sender)).then(respond,error=>respond({ok:false,error:error.message}));
@@ -124,9 +157,10 @@ chrome.runtime.onInstalled.addListener(()=>{
   run(async()=>{
     await freshDay();await syncBlocking(true);
     // Existing tabs need a content script after first installation or extension reload.
-    for (const tab of await chrome.tabs.query({})) if (hostOf(tab.url || '') && Number.isInteger(tab.id)) {
-      await chrome.scripting.executeScript({target:{tabId:tab.id,allFrames:true},files:['media.js','content.js']}).catch(()=>{});
-    }
+    await Promise.all((await chrome.tabs.query({})).map(tab=>{
+      if (!(hostOf(tab.url || '') && Number.isInteger(tab.id))) return;
+      return attempt(()=>chrome.scripting.executeScript({target:{tabId:tab.id,allFrames:true},files:['media.js','content.js']}));
+    }));
     await broadcastConfig();
   }).catch(()=>{});
 });
