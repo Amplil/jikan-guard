@@ -72,6 +72,7 @@ test('worker startup creates durable defaults, recovery alarms, and reconciles s
   assert.equal(h.storage.state.schema, 1);
   assert.equal(h.storage.state.dailyLimitMinutes, 30);
   assert.deepEqual(h.storage.state.rules.map(rule => rule.domain), ['youtube.com', 'tiktok.com']);
+  assert.deepEqual(h.storage.state.rules[0].excludedSubdomains, ['music.youtube.com']);
   assert.equal(h.calls.badges.at(-1).text, '30:00');
   assert.match(h.calls.titles.at(-1).title, /あと30分/);
   assert.equal(h.alarms.get('reconcile').periodInMinutes, 0.5);
@@ -81,16 +82,17 @@ test('worker startup creates durable defaults, recovery alarms, and reconciles s
 }));
 
 test('persisted exhausted budgets restore main-frame blocking and stop matching open tabs', async () => using({
-  state: state([RULE], { 'youtube.com': [[NOW - 60000, NOW]] }),
-  tabs: [{ id: 1, windowId: 11, url: 'https://m.youtube.com/watch?v=1', active: true }, { id: 2, windowId: 11, url: 'https://example.com', active: false }]
+  state: state([{...RULE, excludedSubdomains:['music.youtube.com']}], { 'youtube.com': [[NOW - 60000, NOW]] }),
+  tabs: [{ id: 1, windowId: 11, url: 'https://www.youtube.com/watch?v=1', active: true }, { id: 2, windowId: 11, url: 'https://music.youtube.com', active: false }]
 }, async h => {
   const [block] = h.dynamicRules();
-  assert.deepEqual(block.condition, { requestDomains: ['youtube.com'], resourceTypes: ['main_frame'] });
+  assert.deepEqual(block.condition, { requestDomains:['youtube.com'], excludedRequestDomains:['music.youtube.com'], resourceTypes: ['main_frame'] });
   assert.equal(block.action.type, 'redirect');
   assert.equal(block.action.redirect.url, h.api.runtime.getURL('blocked.html?domain=youtube.com'));
   assert.deepEqual(h.calls.tabUpdates.map(call => call.id), [1]);
   assert.ok(h.calls.tabMessages.some(call => call.id === 1 && call.message.type === 'BLOCK'));
-  assert.equal(h.tabs.get(2).url, 'https://example.com');
+  assert.equal(h.tabs.get(2).url, 'https://music.youtube.com');
+  assert.deepEqual(block.condition.excludedRequestDomains, ['music.youtube.com']);
 }));
 
 test('only this extension own pages can get state or change settings', async () => using({ state: state() }, async h => {
@@ -120,7 +122,7 @@ test('invalid settings fail atomically without replacing saved rules', async () 
     { type: 'SAVE_SETTINGS', rules: [RULE] },
     { type: 'SAVE_SETTINGS', dailyLimitMinutes: -1, rules: [RULE] },
     { type: 'SAVE_SETTINGS', dailyLimitMinutes: 1.5, rules: [RULE] },
-    { type: 'SAVE_SETTINGS', dailyLimitMinutes: 1, rules: [RULE, { ...RULE, domain: 'm.youtube.com' }] },
+    { type: 'SAVE_SETTINGS', dailyLimitMinutes: 1, rules: [RULE, { ...RULE, domain: 'www.youtube.com' }] },
     { type: 'SAVE_SETTINGS', dailyLimitMinutes: 1, rules: [{ ...RULE, enabled: 'true' }] }
   ]) {
     assert.equal((await h.send(message)).ok, false);
@@ -131,7 +133,7 @@ test('invalid settings fail atomically without replacing saved rules', async () 
 
 test('video mode counts only video-positive samples and unions duplicate reports across tabs/frames', async () => using({ state: state(), tabs: [
   { id: 1, windowId: 11, url: 'https://youtube.com/watch?v=1', active: true },
-  { id: 2, windowId: 11, url: 'https://m.youtube.com/watch?v=2', active: false }
+  { id: 2, windowId: 11, url: 'https://www.youtube.com/watch?v=2', active: false }
 ] }, async h => {
   await h.send(report([span(NOW - 5000, NOW - 4000, { video: false, foreground: true })]), h.content());
   assert.equal(total(h), 0);
@@ -146,6 +148,70 @@ test('reports on an unconfigured or disabled site do not consume a budget', asyn
   h.tabs.get(1).url = 'https://other.example';
   assert.equal((await h.send(report([span(NOW - 1000, NOW)]), h.content())).rule, null);
   assert.equal(total(h), 0);
+}));
+
+test('excluded music subdomain can be separately registered with its own mode', async () => using({ state: state([{...RULE, excludedSubdomains:['music.youtube.com']}]), tabs: [
+  { id: 1, windowId: 11, url: 'https://www.youtube.com/watch?v=1', active: false },
+  { id: 2, windowId: 11, url: 'https://music.youtube.com/watch?v=2', active: true }
+] }, async h => {
+  assert.equal((await h.send({ type: 'HELLO' }, h.content(2))).rule, null);
+  assert.equal((await h.send(report([span(NOW - 1000, NOW)]), h.content(2))).rule, null);
+  assert.equal(total(h), 0);
+  const musicRule = { ...RULE, domain: 'music.youtube.com', mode: 'foreground' };
+  const response = await h.send({ type: 'SAVE_SETTINGS', dailyLimitMinutes: 1, rules: [{...RULE, excludedSubdomains:['music.youtube.com']}, musicRule] });
+  assert.equal(response.ok, true);
+  assert.deepEqual(h.calls.tabMessages.find(call => call.id === 2 && call.message.type === 'CONFIG').message.rule, musicRule);
+  h.setNow(NOW + 2000);
+  await h.send(report([span(NOW + 1000, NOW + 2000, { video: false, foreground: true })]), h.content(2));
+  assert.equal(total(h, 'music.youtube.com'), 1000);
+  assert.equal(total(h), 0);
+}));
+
+test('navigation and recovery do not redirect an excluded music subdomain at the limit', async () => using({
+  state: state([{...RULE, excludedSubdomains:['music.youtube.com']}], { 'youtube.com': [[NOW - 60000, NOW]] }),
+  tabs: [{ id: 1, windowId: 11, url: 'https://music.youtube.com/', active: true }],
+  dynamicRules: [{ id: 77, condition: { requestDomains: ['youtube.com'] } }]
+}, async h => {
+  assert.deepEqual(h.calls.dynamicUpdates[0].removeRuleIds, [77]);
+  assert.equal(h.calls.tabUpdates.length, 0);
+  h.api.tabs.onUpdated.emit(1, { status: 'loading' }, h.tabs.get(1));
+  h.api.alarms.onAlarm.emit({ name: 'reconcile' });
+  await h.send({ type: 'GET_STATE' });
+  assert.equal(h.calls.tabUpdates.length, 0);
+  assert.equal(h.calls.tabMessages.some(call => call.message.type === 'BLOCK'), false);
+}));
+
+test('saving exclusions updates loaded tabs and DNR without erasing usage, and removing them restores blocking', async () => using({
+  state: state([RULE], { 'youtube.com': [[NOW - 60000, NOW]] }),
+  tabs: [{ id: 1, windowId: 11, url: 'https://example.com/', active: true }]
+}, async h => {
+  h.tabs.get(1).url = 'https://music.youtube.com/watch?v=1';
+  const excluded = {...RULE, excludedSubdomains:['music.youtube.com','studio.youtube.com']};
+  let response = await h.send({type:'SAVE_SETTINGS', dailyLimitMinutes:1, rules:[excluded]});
+  assert.equal(response.ok, true);
+  assert.equal(response.usedMs, 60000);
+  assert.deepEqual(response.rules[0].excludedSubdomains, excluded.excludedSubdomains);
+  assert.deepEqual(h.storage.state.rules, [excluded]);
+  assert.deepEqual(h.dynamicRules()[0].condition.excludedRequestDomains, excluded.excludedSubdomains);
+  assert.equal(h.calls.tabUpdates.length, 0);
+  assert.equal(h.calls.tabMessages.at(-1).message.rule, null);
+  assert.equal((await h.send({type:'HELLO'}, h.content())).rule, null);
+  response = await h.send({type:'SAVE_SETTINGS', dailyLimitMinutes:1, rules:[RULE]});
+  assert.equal(response.usedMs, 60000);
+  assert.equal(h.dynamicRules()[0].condition.excludedRequestDomains, undefined);
+  assert.match(h.tabs.get(1).url, /blocked.html/);
+}));
+
+test('excluded descendants cannot charge usage and re-inclusion cannot backfill earlier reports', async () => using({
+  state: state([{...RULE, excludedSubdomains:['music.youtube.com']}]),
+  tabs: [{id:1, windowId:11, url:'https://sub.music.youtube.com/', active:true}]
+}, async h => {
+  assert.equal((await h.send(report([span(NOW - 1000, NOW)]), h.content())).rule, null);
+  assert.equal(total(h), 0);
+  await h.send({type:'SAVE_SETTINGS', dailyLimitMinutes:1, rules:[RULE]});
+  h.setNow(NOW + 1000);
+  await h.send(report([span(NOW - 1000, NOW + 1000)]), h.content());
+  assert.equal(total(h), 1000);
 }));
 
 test('foreground mode counts a selected tab in a visible unfocused window and skips hidden tabs and minimized windows', async () => using({ state: state([{ ...RULE, mode: 'foreground' }]) }, async h => {

@@ -1,9 +1,10 @@
 /** Pure counter and validation functions. All intervals are elapsed wall-clock ms. */
 import './media.js';
+import './domains.js';
 export const MAX_GAP_MS = globalThis.JikanMedia.MAX_GAP_MS;
 export const DEFAULT_DAILY_LIMIT_MINUTES = 30;
 export const DEFAULT_RULES = Object.freeze([
-  { domain: 'youtube.com', mode: 'video', enabled: true },
+  { domain: 'youtube.com', mode: 'video', enabled: true, excludedSubdomains: ['music.youtube.com'] },
   { domain: 'tiktok.com', mode: 'video', enabled: true }
 ]);
 export function localDay(now = Date.now()) {
@@ -12,10 +13,7 @@ export function localDay(now = Date.now()) {
 }
 export function localMidnight(now) { const d = new Date(now); d.setHours(0,0,0,0); return +d; }
 export function nextMidnight(now) { const d = new Date(now); d.setHours(24,0,0,0); return +d; }
-export function hostMatches(host, domain) {
-  host = String(host).toLowerCase().replace(/\.$/,'');
-  return host === domain || host.endsWith(`.${domain}`);
-}
+export const hostMatches = globalThis.JikanDomains.matches;
 export function hostOf(url) {
   try { const u = new URL(url); return ['http:','https:'].includes(u.protocol) ? u.hostname.toLowerCase().replace(/\.$/,'') : ''; }
   catch { return ''; }
@@ -41,14 +39,15 @@ export function validateRules(input) {
     const domain = normalizeDomain(r.domain);
     if (!['video','foreground'].includes(r.mode)) throw new Error('計測方法を選んでください');
     if (typeof r.enabled !== 'boolean') throw new Error('有効・無効の設定が正しくありません');
-    return {domain, mode:r.mode, enabled:r.enabled};
+    const excludedSubdomains = globalThis.JikanDomains.validateExclusions(domain, r.excludedSubdomains === undefined ? [] : r.excludedSubdomains, normalizeDomain);
+    return {domain, mode:r.mode, enabled:r.enabled, ...(excludedSubdomains.length ? {excludedSubdomains} : {})};
   });
   for (let i=0;i<result.length;i++) for (let j=0;j<i;j++) {
-    if (hostMatches(result[i].domain,result[j].domain) || hostMatches(result[j].domain,result[i].domain)) throw new Error(`${result[i].domain} と ${result[j].domain} は重複しています。親ドメインだけを登録してください`);
+    if (globalThis.JikanDomains.overlaps(result[i],result[j])) throw new Error(`${result[i].domain} と ${result[j].domain} は範囲が重複しています。個別に登録するサブドメインは親ドメインの対象外に指定してください`);
   }
   return result;
 }
-export function ruleFor(rules, host) { return rules.find(r=>hostMatches(host,r.domain)); }
+export function ruleFor(rules, host) { return rules.find(r=>globalThis.JikanDomains.matchesRule(r,host)); }
 export function rollover(ledger, now=Date.now()) {
   if (!ledger || ledger.day !== localDay(now)) return {day:localDay(now), usage:{}};
   return ledger;

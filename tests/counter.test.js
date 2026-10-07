@@ -14,7 +14,7 @@ const rule = (overrides = {}) => ({ domain: 'youtube.com', mode: 'video', enable
 
 // Fixtures use local dates deliberately: budgets reset in the user's local day.
 test('default rules independently configure YouTube and TikTok playback', () => {
-  assert.deepEqual(validateRules(DEFAULT_RULES), [rule(), rule({ domain: 'tiktok.com' })]);
+  assert.deepEqual(validateRules(DEFAULT_RULES), [rule({ excludedSubdomains: ['music.youtube.com'] }), rule({ domain: 'tiktok.com' })]);
 });
 
 test('domain normalization canonicalizes case, trailing dot and international names', () => {
@@ -31,12 +31,22 @@ for (const input of [undefined, null, 12, {}, '', ' ', 'localhost', 'https://you
   test(`rejects invalid domain ${JSON.stringify(input)}`, () => assert.throws(() => normalizeDomain(input)));
 }
 
-test('host matching uses a dot boundary, including subdomains and canonical host case', () => {
-  for (const host of ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'WWW.YOUTUBE.COM.']) {
+test('host matching includes subdomains only at a dot boundary', () => {
+  for (const host of ['youtube.com', 'www.youtube.com', 'music.youtube.com', 'm.youtube.com', 'WWW.YOUTUBE.COM.']) {
     assert.equal(hostMatches(host, 'youtube.com'), true, host);
   }
   for (const host of ['notyoutube.com', 'youtube.com.evil.test', 'youtube-com.test', 'tiktok.com', '']) {
     assert.equal(hostMatches(host, 'youtube.com'), false, host);
+  }
+  assert.equal(hostMatches('youtube.com', 'www.youtube.com'), false);
+});
+
+test('exclusions are normalized, persisted and validated as strict subdomains', () => {
+  assert.deepEqual(validateRules([rule({excludedSubdomains:[' MUSIC.YouTube.COM. ', '例え.youtube.com']})]),
+    [rule({excludedSubdomains:['music.youtube.com', 'xn--r8jz45g.youtube.com']})]);
+  assert.deepEqual(validateRules([rule({excludedSubdomains:[]})]), [rule()]);
+  for (const excludedSubdomains of [null, '', {}, ['youtube.com'], ['tiktok.com'], ['notyoutube.com'], ['youtube.com.evil.test'], ['*.youtube.com'], ['https://music.youtube.com'], ['music.youtube.com','MUSIC.YOUTUBE.COM.'], Array(51).fill('music.youtube.com')]) {
+    assert.throws(() => validateRules([rule({excludedSubdomains})]));
   }
 });
 
@@ -76,6 +86,9 @@ test('duplicate and overlapping domain rules are rejected regardless of order or
     assert.throws(() => validateRules(domains.map((domain, i) => rule({ domain, enabled: i === 0 }))));
   }
   assert.equal(validateRules([rule({ domain: 'a.example.com' }), rule({ domain: 'b.example.com' })]).length, 2);
+  assert.equal(validateRules([rule({excludedSubdomains:['music.youtube.com']}), rule({ domain: 'music.youtube.com', enabled: false })]).length, 2);
+  assert.equal(validateRules([rule({ domain: 'music.youtube.com' }), rule({excludedSubdomains:['music.youtube.com']})]).length, 2);
+  assert.throws(() => validateRules([rule(), rule({domain:'music.youtube.com'})]));
 });
 
 test('normalized rule output drops per-site limits and unrecognized keys without mutating source data', () => {
@@ -86,11 +99,17 @@ test('normalized rule output drops per-site limits and unrecognized keys without
   assert.equal(source.extra, 'ignored');
 });
 
-test('rule lookup selects configured parent domain without suffix false positives', () => {
-  const rules = [rule(), rule({ domain: 'tiktok.com', mode: 'foreground' })];
+test('rule lookup excludes configured subdomains and their descendants', () => {
+  const rules = [rule({excludedSubdomains:['music.youtube.com', 'studio.youtube.com']}), rule({ domain: 'tiktok.com', mode: 'foreground' })];
   assert.equal(ruleFor(rules, 'm.tiktok.com'), rules[1]);
   assert.equal(ruleFor(rules, 'www.youtube.com'), rules[0]);
   assert.equal(ruleFor(rules, 'fakeyoutube.com'), undefined);
+  assert.equal(ruleFor(rules, 'm.youtube.com'), rules[0]);
+  for (const host of ['music.youtube.com','www.music.youtube.com','studio.youtube.com','MUSIC.YOUTUBE.COM.']) assert.equal(ruleFor(rules, host), undefined);
+  assert.equal(ruleFor(rules, 'notmusic.youtube.com'), rules[0]);
+  const separate = rule({domain:'music.youtube.com'});
+  assert.equal(ruleFor([...rules, separate], 'music.youtube.com'), separate);
+  assert.equal(ruleFor([...rules, separate], 'sub.music.youtube.com'), separate);
 });
 
 test('local date and midnight helpers use local calendar boundaries', () => {

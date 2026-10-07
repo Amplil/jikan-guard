@@ -20,6 +20,7 @@ function setStatus(message, error = false) {
 function markDirty() {
   if (!ready || saving) return;
   dirty = true;
+  saveButton.disabled = false;
   setStatus('未保存の変更があります');
 }
 
@@ -42,8 +43,61 @@ function setError(row, message, selector) {
   error.hidden = false;
   error.textContent = message;
   const input = row.querySelector(selector);
+  if (selector === '.exclusions-input') {
+    row.querySelector('.field-exclusions').hidden = false;
+    row.querySelector('.exclusion-domain-input').setAttribute('aria-invalid', 'true');
+    return row.querySelector('.exclusion-domain-input');
+  }
   input.setAttribute('aria-invalid', 'true');
   return input;
+}
+
+function positionMenu(button, menu) {
+  const anchor = button.getBoundingClientRect();
+  const inset = 8;
+  const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+  menu.style.maxWidth = `${Math.max(1, Math.min(300, width - inset * 2))}px`;
+  menu.style.maxHeight = `${Math.max(1, height - inset * 2)}px`;
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(inset, Math.min(anchor.right - bounds.width, width - bounds.width - inset))}px`;
+  const below = anchor.bottom + 5;
+  const preferred = below + bounds.height <= height - inset ? below : anchor.top - bounds.height - 5;
+  menu.style.top = `${Math.max(inset, Math.min(preferred, height - bounds.height - inset))}px`;
+}
+
+function bindMenu(container, button, menu) {
+  const close = () => {
+    if (menu.matches(':popover-open')) menu.hidePopover();
+    menu.hidden = true; button.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    list.querySelectorAll('[role="menu"]').forEach(other => {
+      if (other.matches(':popover-open')) other.hidePopover();
+      other.hidden = true;
+    });
+    list.querySelectorAll('[aria-haspopup="menu"]').forEach(other => other.setAttribute('aria-expanded', 'false'));
+    menu.hidden = false; menu.showPopover(); button.setAttribute('aria-expanded', 'true');
+    positionMenu(button, menu);
+    menu.querySelector('[role="menuitem"]').focus({preventScroll:true});
+  };
+  menu.addEventListener('toggle', () => {
+    const opened = menu.matches(':popover-open');
+    menu.hidden = !opened; button.setAttribute('aria-expanded', String(opened));
+  });
+  button.addEventListener('click', () => {if (menu.hidden) open(); else close();});
+  container.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {event.preventDefault(); close(); button.focus();}
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
+      const current = items.indexOf(event.target);
+      if (menu.hidden) open();
+      const next = current < 0 ? (event.key === 'ArrowDown' ? 0 : items.length - 1) : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      items[next].focus();
+    }
+  });
+  container.addEventListener('focusout', event => {if (!container.contains(event.relatedTarget)) close();});
+  return close;
 }
 
 function addRow(rule = {domain: '', mode: 'video', enabled: true}, focus = false) {
@@ -55,16 +109,105 @@ function addRow(rule = {domain: '', mode: 'video', enabled: true}, focus = false
   domainInput.value = rule.domain;
   row.querySelector('.mode-input').value = rule.mode;
   row.querySelector('.enabled-input').checked = rule.enabled !== false;
+  const summary = row.querySelector('.exclusions-summary');
+  const savedNames = rule.excludedSubdomains || [];
+  summary.hidden = savedNames.length === 0;
+  savedNames.forEach(name => {
+    const item = document.createElement('li');
+    item.textContent = name;
+    row.querySelector('.saved-exclusions-list').append(item);
+  });
+  const exclusionsInput = row.querySelector('.exclusions-input');
+  exclusionsInput.value = (rule.excludedSubdomains || []).join('\n');
+  const editor = row.querySelector('.field-exclusions');
+  const menuButton = row.querySelector('.rule-menu-button');
+  const menu = row.querySelector('.rule-menu');
+  menu.id = `rule-menu-${nextId}`;
+  menuButton.setAttribute('aria-controls', menu.id);
+  const closeMenu = bindMenu(row.querySelector('.site-menu'), menuButton, menu);
+  row.querySelector('.edit-exclusions').addEventListener('click', () => {
+    closeMenu(); editor.hidden = false;
+    if (!entries.children.length) appendExclusion('');
+    entries.querySelector('input').focus();
+  });
+  row.querySelector('.close-exclusions').addEventListener('click', () => {
+    editor.hidden = true; menuButton.focus();
+  });
+  const hint = row.querySelector('.exclusions-hint');
+  hint.id = `exclusions-hint-${nextId}`;
+  const entries = row.querySelector('.exclusions-list');
+  const syncExclusions = () => {
+    const inputs = Array.from(entries.querySelectorAll('input'));
+    const names = inputs.map(input => input.value.trim()).filter(Boolean);
+    exclusionsInput.value = names.join('\n');
+    let parent;
+    try { parent = normalizeDomain(domainInput.value); }
+    catch { parent = domainInput.value.trim() || '親ドメイン'; }
+    row.querySelector('.add-exclusion').disabled = saving || inputs.length >= 50;
+    menuButton.setAttribute('aria-label', `${domainInput.value.trim() || 'このサイト'}の設定${names.length ? `（対象外${names.length}件）` : ''}`);
+    inputs.forEach((input, index) => {
+      const suffix = input.closest('li').querySelector('.subdomain-suffix');
+      suffix.textContent = `.${parent}`;
+      suffix.title = `.${parent}`;
+      input.setAttribute('aria-label', `対象外にするサブドメイン ${index + 1}`);
+      const label = input.value.trim() ? `${input.value.trim()}.${parent}` : `サブドメイン ${index + 1}`;
+      input.closest('li').querySelector('.remove-exclusion').setAttribute('aria-label', `${label}の対象外登録を削除`);
+      input.closest('li').querySelector('.exclusion-menu-button').setAttribute('aria-label', `${label}の設定`);
+    });
+  };
+  let nextExclusionId = 0;
+  const appendExclusion = name => {
+    const entry = document.createElement('li');
+    const input = document.createElement('input');
+    input.type = 'text'; input.className = 'exclusion-domain-input';
+    input.value = name ? name.slice(0, -(rule.domain.length + 1)) : '';
+    input.placeholder = '例：music'; input.maxLength = 253;
+    input.autocomplete = 'off'; input.setAttribute('autocapitalize', 'none'); input.spellcheck = false;
+    input.setAttribute('aria-describedby', `${hint.id} ${errorId}`);
+    input.addEventListener('keydown', event => {if (event.key === 'Enter') event.preventDefault();});
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'remove-exclusion'; remove.textContent = '対象外の登録を削除する';
+    remove.setAttribute('role', 'menuitem');
+    remove.addEventListener('click', () => {
+      entry.remove(); clearError(row); syncExclusions(); markDirty();
+      const remaining = entries.querySelector('input');
+      if (remaining) remaining.focus(); else row.querySelector('.add-exclusion').focus();
+    });
+    const group = document.createElement('div');
+    group.className = 'subdomain-input-group';
+    const suffix = document.createElement('span');
+    suffix.className = 'subdomain-suffix';
+    group.append(input, suffix);
+    const menuContainer = document.createElement('div');
+    menuContainer.className = 'site-menu';
+    const entryMenuButton = document.createElement('button');
+    entryMenuButton.type = 'button'; entryMenuButton.className = 'exclusion-menu-button icon-button'; entryMenuButton.textContent = '⋯';
+    entryMenuButton.setAttribute('aria-haspopup', 'menu'); entryMenuButton.setAttribute('aria-expanded', 'false');
+    const entryMenu = document.createElement('div');
+    entryMenu.className = 'rule-menu'; entryMenu.hidden = true; entryMenu.setAttribute('role', 'menu');
+    entryMenu.setAttribute('popover', 'auto');
+    entryMenu.id = `${menu.id}-exclusion-${++nextExclusionId}`;
+    entryMenuButton.setAttribute('aria-controls', entryMenu.id);
+    entryMenu.append(remove); menuContainer.append(entryMenuButton, entryMenu);
+    entry.append(group, menuContainer); entries.append(entry); bindMenu(menuContainer, entryMenuButton, entryMenu); syncExclusions();
+    return input;
+  };
+  (rule.excludedSubdomains || []).forEach(appendExclusion);
+  row.querySelector('.add-exclusion').addEventListener('click', () => {
+    if (saving || entries.children.length >= 50) return;
+    appendExclusion('').focus();
+  });
+  syncExclusions();
   const updateLabels = () => {
     const name = domainInput.value.trim() || 'このサイト';
     row.querySelector('legend').textContent = `${name}の設定`;
-    row.querySelector('.delete-rule').setAttribute('aria-label', `${name}を削除`);
+    row.querySelector('.delete-rule').setAttribute('aria-label', `${name}のドメインを削除する`);
     const enabled = row.querySelector('.enabled-input').checked;
     row.querySelector('.toggle-text').textContent = enabled ? '有効' : '無効';
     row.classList.toggle('rule-disabled', !enabled);
   };
-  row.addEventListener('input', () => {clearError(row); updateLabels(); markDirty();});
-  row.addEventListener('change', () => {clearError(row); updateLabels(); markDirty();});
+  row.addEventListener('input', () => {clearError(row); updateLabels(); syncExclusions(); markDirty();});
+  row.addEventListener('change', () => {clearError(row); updateLabels(); syncExclusions(); markDirty();});
   row.querySelector('.delete-rule').addEventListener('click', () => {
     if (saving) return;
     const sibling = row.nextElementSibling || row.previousElementSibling;
@@ -99,6 +242,13 @@ function normalizeDomain(value) {
   return raw;
 }
 
+function normalizeSubdomain(value, domain) {
+  const name = value.trim().toLowerCase().replace(/\.$/, '');
+  if (!name || /[\s/:?#@*\\]/.test(name)) throw new Error('music のようにサブドメイン部分だけを入力してください');
+  if (name === domain || name.endsWith(`.${domain}`)) throw new Error(`.${domain} は右側に付きます。サブドメイン部分だけを入力してください`);
+  return normalizeDomain(`${name}.${domain}`);
+}
+
 function collectRules() {
   const rules = [];
   let firstInvalid = null;
@@ -107,13 +257,19 @@ function collectRules() {
     let domain;
     try { domain = normalizeDomain(row.querySelector('.domain-input').value); }
     catch (error) { const input = setError(row, error.message, '.domain-input'); firstInvalid ||= input; continue; }
-    const overlap = rules.find(rule => domain === rule.domain || domain.endsWith(`.${rule.domain}`) || rule.domain.endsWith(`.${domain}`));
+    let excludedSubdomains;
+    try {
+      const names = row.querySelector('.exclusions-input').value.split('\n').map(value => value.trim()).filter(Boolean).map(value => normalizeSubdomain(value, domain));
+      excludedSubdomains = globalThis.JikanDomains.validateExclusions(domain, names, normalizeDomain);
+    } catch (error) { const input = setError(row, error.message, '.exclusions-input'); firstInvalid ||= input; continue; }
+    const candidate = {domain, mode: row.querySelector('.mode-input').value, enabled: row.querySelector('.enabled-input').checked, ...(excludedSubdomains.length ? {excludedSubdomains} : {})};
+    const overlap = rules.find(rule => globalThis.JikanDomains.overlaps(candidate, rule));
     if (overlap) {
       const input = setError(row, `${overlap.domain} と範囲が重複しています。どちらか1つにしてください`, '.domain-input');
       firstInvalid ||= input;
       continue;
     }
-    rules.push({domain, mode: row.querySelector('.mode-input').value, enabled: row.querySelector('.enabled-input').checked});
+    rules.push(candidate);
   }
   if (firstInvalid) { firstInvalid.focus(); return null; }
   return rules;
@@ -128,8 +284,9 @@ function readDailyLimit(value) {
 
 function setBusy(busy) {
   saving = busy;
-  form.querySelectorAll('input,select,button').forEach(control => {control.disabled = busy;});
-  saveButton.disabled = busy || !ready;
+  form.querySelectorAll('input,textarea,select,button').forEach(control => {control.disabled = busy;});
+  for (const row of list.children) row.querySelector('.add-exclusion').disabled = busy || row.querySelector('.exclusions-list').children.length >= 50;
+  saveButton.disabled = busy || !ready || !dirty;
   saveButton.textContent = busy ? '保存しています…' : '設定を保存';
   updateCount();
 }
@@ -150,7 +307,7 @@ addButton.addEventListener('click', () => {
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
-  if (!ready || saving) return;
+  if (!ready || saving || !dirty) return;
   const rules = collectRules();
   const limitInput = document.getElementById('daily-limit');
   const limitError = document.getElementById('daily-limit-error');
@@ -205,7 +362,8 @@ async function initialize() {
     document.getElementById('daily-limit').value = state.dailyLimitMinutes;
     (Array.isArray(state.rules) ? state.rules : []).forEach(rule => addRow(rule));
     ready = true;
-    saveButton.disabled = false;
+    saveButton.disabled = true;
+    setStatus('設定は保存されています');
     loadStatus.hidden = true;
     updateCount();
   } catch (error) {
@@ -214,4 +372,9 @@ async function initialize() {
     setStatus('ページを再読み込みして、もう一度お試しください', true);
   }
 }
+function repositionMenus() {
+  list.querySelectorAll('.rule-menu:popover-open').forEach(menu => positionMenu(menu.parentElement.querySelector('[aria-haspopup="menu"]'), menu));
+}
+window.addEventListener('resize', repositionMenus);
+window.addEventListener('scroll', repositionMenus, true);
 initialize();

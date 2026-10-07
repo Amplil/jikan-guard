@@ -74,20 +74,20 @@ async function enforceBlockedTabs() {
 }
 async function syncBlocking(force=false, retryOpenTabs=false) {
   const today=budget();
-  const domains=today.blocked ? data.rules.filter(rule=>rule.enabled).map(rule=>rule.domain).sort() : [];
-  const signature=JSON.stringify(domains);
+  const rules=today.blocked ? data.rules.filter(rule=>rule.enabled).slice().sort((a,b)=>a.domain.localeCompare(b.domain)) : [];
+  const signature=JSON.stringify(rules.map(rule=>[rule.domain,rule.excludedSubdomains || []]));
   if (!force && signature===blockingSignature) {
     // Chrome can temporarily reject tabs.update (for example while dragging a tab).
     // A saved DNR rule alone cannot replace an already-loaded page.
-    if (retryOpenTabs && domains.length) await enforceBlockedTabs();
+    if (retryOpenTabs && rules.length) await enforceBlockedTabs();
   } else {
     try {
       const old=await within(chrome.declarativeNetRequest.getDynamicRules());
       await within(chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds:old.map(r=>r.id),
-        addRules:domains.map((domain,index)=>({id:index+1,priority:1,
-          action:{type:'redirect',redirect:{url:blockUrl(domain)}},
-          condition:{requestDomains:[domain],resourceTypes:['main_frame']}}))
+        addRules:rules.map((rule,index)=>({id:index+1,priority:1,
+          action:{type:'redirect',redirect:{url:blockUrl(rule.domain)}},
+          condition:{requestDomains:[rule.domain],...(rule.excludedSubdomains?.length ? {excludedRequestDomains:rule.excludedSubdomains} : {}),resourceTypes:['main_frame']}}))
       }));
       blockingSignature=signature;
     } catch (error) { console.error('じかんガード:',error); }
@@ -111,7 +111,7 @@ async function handle(message,sender) {
     const rules=validateRules(message.rules), dailyLimitMinutes=validateDailyLimit(message.dailyLimitMinutes), now=Date.now();
     for (const r of rules) {
       const old=data.rules.find(x=>x.domain===r.domain);
-      if (!old || old.mode!==r.mode || old.enabled!==r.enabled) data.since[r.domain]=now;
+      if (!old || old.mode!==r.mode || old.enabled!==r.enabled || JSON.stringify(old.excludedSubdomains || [])!==JSON.stringify(r.excludedSubdomains || [])) data.since[r.domain]=now;
     }
     // Today's usage survives mode/limit changes, removal, and re-addition.
     data.dailyLimitMinutes=dailyLimitMinutes;

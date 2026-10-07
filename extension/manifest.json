@@ -50,6 +50,7 @@
     {
       "resources": [
         "blocked.html",
+        "domains.js",
         "blocked.js",
         "ui.css"
       ],

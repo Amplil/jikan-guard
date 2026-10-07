@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>設定 · じかんガード</title>
   <link rel="stylesheet" href="ui.css">
+  <script src="domains.js" defer></script>
   <script src="options.js" defer></script>
 </head>
 <body class="options-page">
@@ -24,23 +25,24 @@
         <p id="load-status" class="status-message" role="status">設定を読み込んでいます…</p>
         <div id="rule-list" class="rule-list"></div>
         <div id="rules-empty" class="empty-rules" hidden>サイトがまだありません。「サイトを追加」から設定しましょう</div>
-        <div class="add-rule-bar"><button id="add-rule" type="button" class="button button-secondary" disabled><span aria-hidden="true">＋</span> サイトを追加</button><p>ドメイン単位で登録。サブドメインも含めて制限します</p></div>
+        <div class="add-rule-bar"><button id="add-rule" type="button" class="button button-secondary" disabled><span aria-hidden="true">＋</span> サイトを追加</button><p>サブドメインも制限対象です。対象外にしたいものは各サイトの欄で指定できます</p></div>
       </section>
-      <div class="save-bar"><div><p id="save-status" class="save-status" role="status" aria-live="polite">変更は保存すると反映されます</p><p class="save-subtext">上限や計測方法を変えても、今日の使用時間は引き継ぎます</p></div><button id="save-settings" type="submit" class="button button-primary" disabled>設定を保存</button></div>
+      <div class="save-bar"><div><p id="save-status" class="save-status" role="status" aria-live="polite">設定を読み込んでいます…</p><p class="save-subtext">上限や計測方法を変えても、今日の使用時間は引き継ぎます</p></div><button id="save-settings" type="submit" class="button button-primary" disabled>設定を保存</button></div>
     </form>
     <section class="explainer-grid" aria-label="計測方法について">
       <article class="info-card"><span class="info-number" aria-hidden="true">01</span><h2>動画の再生時間</h2><p>実際に再生していた時間を数えます。2倍速で10分見た場合も、使用時間は10分です。</p><p>ミュート・バックグラウンド・ピクチャーインピクチャーでの再生も対象。一時停止・バッファリング・シーク中は数えません。</p></article>
       <article class="info-card"><span class="info-number" aria-hidden="true">02</span><h2>見えているタブの時間</h2><p>最小化していないウィンドウで、対象サイトのタブを選択している時間を数えます。並べて開いた別ウィンドウも、フォーカスがなくても数えます。</p><p>選択していない背面タブや、最小化しているウィンドウは数えません。</p></article>
     </section>
-    <aside class="notice"><span class="notice-symbol" aria-hidden="true">i</span><div><h2>知っておいてほしいこと</h2><ul><li>動画の検出はベストエフォートです。サイト独自のプレーヤーや、閉じたShadow DOM内の動画などは計測できない場合があります。</li><li>同じドメインや、親子関係にあるドメインは重複登録できません。例：youtube.com と www.youtube.com</li><li>使用時間は端末のローカル時刻で毎日0時にリセットされます。拡張機能の無効化や削除を防ぐものではありません。</li><li>設定と使用時間はこの端末のChromeに保存します。解析ツールや外部サーバーへの送信はありません。</li></ul></div></aside>
+    <aside class="notice"><span class="notice-symbol" aria-hidden="true">i</span><div><h2>知っておいてほしいこと</h2><ul><li>動画の検出はベストエフォートです。サイト独自のプレーヤーや、閉じたShadow DOM内の動画などは計測できない場合があります。</li><li>対象外の欄には、登録ドメインのサブドメインを入力してください。例：youtube.com の対象外の欄に music と入力すると、music.youtube.com が対象外になります。対象外の指定は、その配下のサブドメインにも適用されます。</li><li>使用時間は端末のローカル時刻で毎日0時にリセットされます。拡張機能の無効化や削除を防ぐものではありません。</li><li>設定と使用時間はこの端末のChromeに保存します。解析ツールや外部サーバーへの送信はありません。</li></ul></div></aside>
     <footer class="settings-footer">じかんガード <span aria-hidden="true">·</span> 余白をつくる、小さな習慣。</footer>
   </main>
   <template id="rule-template">
     <fieldset class="rule-row">
       <legend class="sr-only">サイトの設定</legend>
-      <div class="field field-domain"><label>ドメイン<input class="domain-input" type="text" placeholder="例：youtube.com" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="253" required></label></div>
+      <div class="field field-domain"><label>ドメイン<input class="domain-input" type="text" placeholder="例：youtube.com" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="253" required></label><div class="exclusions-summary" hidden><span>対象外（保存済み）</span><ul class="saved-exclusions-list" aria-label="保存済みの対象外サブドメイン"></ul></div></div>
       <div class="field field-mode"><label>計測方法<select class="mode-input"><option value="video">動画の再生時間</option><option value="foreground">見えているタブの時間</option></select></label></div>
-      <div class="rule-actions"><label class="toggle-label"><input class="enabled-input" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span class="toggle-text">有効</span></label><button class="delete-rule icon-button" type="button" aria-label="このサイトを削除" title="削除">×</button></div>
+      <div class="rule-actions"><label class="toggle-label"><input class="enabled-input" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span class="toggle-text">有効</span></label><div class="site-menu"><button class="rule-menu-button icon-button" type="button" aria-label="このサイトの設定" aria-haspopup="menu" aria-expanded="false" title="サイトの設定">⋯</button><div class="rule-menu" role="menu" popover="auto" hidden><button class="edit-exclusions" type="button" role="menuitem">対象外のサブドメインを登録</button><button class="delete-rule" type="button" role="menuitem">ドメインを削除する</button></div></div></div>
+      <div class="field field-exclusions" hidden><div class="exclusions-heading"><h3>対象外のサブドメイン</h3><button class="close-exclusions icon-button" type="button" aria-label="対象外のサブドメインの入力欄を閉じる">閉じる</button></div><input class="exclusions-input" type="hidden"><ul class="exclusions-list" aria-label="登録した対象外のサブドメイン"></ul><button class="add-exclusion button button-secondary" type="button"><span aria-hidden="true">＋</span> サブドメインを追加</button><p class="exclusions-hint">music のようにサブドメイン部分だけを入力してください。右側の親ドメインが自動で付きます。1件ずつ追加できます（最大50件）。指定したサブドメインとその配下は計測・ブロックの対象外になります。「設定を保存」で反映します。</p></div>
       <p class="rule-error" role="alert" hidden></p>
     </fieldset>
   </template>

@@ -26,7 +26,7 @@ function duration(ms) {
 }
 
 function render(state, requested) {
-  const rule = (Array.isArray(state.rules) ? state.rules : []).find(item => domain === item.domain || domain.endsWith(`.${item.domain}`));
+  const rule = (Array.isArray(state.rules) ? state.rules : []).find(item => globalThis.JikanDomains.matchesRule(item, domain));
   const available = !rule || rule.enabled === false || !rule.blocked;
   checkButton.textContent = available ? 'サイトに戻る' : 'もう一度確認';
   title.textContent = available ? 'また、あなたのペースで。' : '今日は、ここまで。';
