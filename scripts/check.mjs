@@ -3,7 +3,9 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const dir=new URL('../extension/',import.meta.url);
 const manifest=JSON.parse(fs.readFileSync(new URL('manifest.json',dir),'utf8'));
+const pkg=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8'));
 if(manifest.manifest_version!==3) throw Error('Manifest must be V3');
+if(pkg.version!==manifest.version) throw Error(`package.json version ${pkg.version} != manifest version ${manifest.version}`);
 const referenced = [
  manifest.background?.service_worker, manifest.action?.default_popup, manifest.options_ui?.page,
  ...Object.values(manifest.icons || {}), ...Object.values(manifest.action?.default_icon || {}),

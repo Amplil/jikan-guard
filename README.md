@@ -1,4 +1,4 @@
-# じかんガード v0.1.0
+# じかんガード v0.2.0
 
 登録したサイトの使用時間を、1日の合計で制限するデスクトップ版 Chrome 向けの試作拡張です。サーバー・アカウント・外部ライブラリは不要です。
 
@@ -71,8 +71,11 @@
 ```sh
 npm test
 npm run check
-npm run package
+npm run package        # 配布用（README 付き一式）
+npm run package:store  # Chrome Web Store 用（extension/ のみ、manifest が ZIP 直下）
 ```
+
+バージョンは **`extension/manifest.json` の `version`** を正とし、Store 用 ZIP のファイル名もここから決まります。上げるときは `manifest.json` と `package.json` を同じ値に揃え、`README.md` の見出しも合わせてください（`npm run check` で `package.json` と manifest の一致を確認します）。
 
 - `extension/`: Chromeへ読み込む本体（Manifest V3）
 - `tests/`: 純粋関数、コンテンツスクリプト、Chrome APIモックのテスト

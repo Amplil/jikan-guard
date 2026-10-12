@@ -2,10 +2,11 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 const script = fileURLToPath(new URL('./package.py', import.meta.url));
+const extraArgs = process.argv.slice(2);
 // WindowsApps\python3.exe is a Store alias that exits 9009. The py launcher finds the real install.
 const attempts = process.platform === 'win32'
-  ? [['py', ['-3', script]]]
-  : [['python3', [script]], ['python', [script]]];
+  ? [['py', ['-3', script, ...extraArgs]]]
+  : [['python3', [script, ...extraArgs]], ['python', [script, ...extraArgs]]];
 
 for (const [command, args] of attempts) {
   const result = spawnSync(command, args, {stdio: 'inherit'});
