@@ -378,7 +378,7 @@ test('toolbar countdown hides when no site is enabled', async () => using({
   state: state([{ ...RULE, enabled: false }])
 }, async h => {
   assert.equal(h.calls.badges.at(-1).text, '');
-  assert.equal(h.calls.titles.at(-1).title, 'じかんガード');
+  assert.equal(h.calls.titles.at(-1).title, 'ドパガキガード');
 }));
 
 test('combined usage of different sites shares one daily total and blocks every enabled site', async () => using({

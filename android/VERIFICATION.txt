@@ -1,0 +1,2 @@
+PASS 21 assertions (pure Java only, not Android device tests)
+PASS all application Java sources, Java 17 bytecode target, official Android SDK 35 public API stub (Gradle/APK not tested)

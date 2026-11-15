@@ -11,7 +11,7 @@ function attempt(work,ms=1000) { return within(Promise.resolve().then(work),ms).
 // All mutation is serialized, including asynchronous storage and ruleset writes.
 function run(task) {
   const result=queue.then(async()=>{await load();return task();});
-  queue=result.catch(error=>{console.error('じかんガード:',error);chrome.action.setBadgeText({text:'!'}).catch(()=>{});});
+  queue=result.catch(error=>{console.error('ドパガキガード:',error);chrome.action.setBadgeText({text:'!'}).catch(()=>{});});
   return result;
 }
 async function load() {
@@ -44,14 +44,14 @@ function publicState() {
 async function paintCountdown(today=budget()) {
   if (!data.rules.some(rule=>rule.enabled)) {
     await chrome.action.setBadgeText({text:''});
-    await chrome.action.setTitle({title:'じかんガード'});
+    await chrome.action.setTitle({title:'ドパガキガード'});
     return;
   }
   const urgent=today.blocked || today.remainingMs<=5*60*1000;
   await chrome.action.setBadgeBackgroundColor({color:urgent ? '#9F4039' : '#245FC8'});
   await chrome.action.setBadgeTextColor({color:'#FFFFFF'});
   await chrome.action.setBadgeText({text:countdownBadge(today.remainingMs)});
-  await chrome.action.setTitle({title:today.blocked ? 'じかんガード: 今日の上限です' : `じかんガード: あと${remainingPhrase(today.remainingMs)}`});
+  await chrome.action.setTitle({title:today.blocked ? 'ドパガキガード: 今日の上限です' : `ドパガキガード: あと${remainingPhrase(today.remainingMs)}`});
 }
 async function freshDay() {
   const before=data.ledger.day;
@@ -90,7 +90,7 @@ async function syncBlocking(force=false, retryOpenTabs=false) {
           condition:{requestDomains:[rule.domain],...(rule.excludedSubdomains?.length ? {excludedRequestDomains:rule.excludedSubdomains} : {}),resourceTypes:['main_frame']}}))
       }));
       blockingSignature=signature;
-    } catch (error) { console.error('じかんガード:',error); }
+    } catch (error) { console.error('ドパガキガード:',error); }
     await enforceBlockedTabs();
   }
   await paintCountdown(today);
