@@ -1,0 +1,65 @@
+name: JikanGuard
+options:
+  deploymentTarget:
+    iOS: '16.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    TARGETED_DEVICE_FAMILY: '1,2'
+    # Replace these values before signing; no account setup is performed here.
+    DEVELOPMENT_TEAM: ''
+    GUARD_APP_GROUP: group.com.example.jikanguard
+    GUARD_DISPLAY_NAME: ドパガキガード
+    CODE_SIGN_STYLE: Automatic
+targets:
+  JikanGuard:
+    type: application
+    platform: iOS
+    sources: [App, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.jikanguard
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: $(GUARD_DISPLAY_NAME)
+        GuardAppGroup: $(GUARD_APP_GROUP)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    entitlements:
+      path: App/JikanGuard.entitlements
+      properties:
+        com.apple.developer.family-controls: true
+        com.apple.security.application-groups: ['$(GUARD_APP_GROUP)']
+    dependencies:
+      - target: GuardMonitor
+        embed: true
+  GuardMonitor:
+    type: app-extension
+    platform: iOS
+    sources: [Monitor, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.jikanguard.monitor
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+    info:
+      path: Monitor/Info.plist
+      properties:
+        CFBundleDisplayName: GuardMonitor
+        GuardAppGroup: $(GUARD_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ActivityMonitor
+    entitlements:
+      path: Monitor/GuardMonitor.entitlements
+      properties:
+        com.apple.developer.family-controls: true
+        com.apple.security.application-groups: ['$(GUARD_APP_GROUP)']
+schemes:
+  JikanGuard:
+    build:
+      targets:
+        JikanGuard: all
